@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import Sidebar from "./components/Layout/Sidebar";
 import Header from "./components/Layout/Header";
-import Dashboard from "./components/Dashboard/Dashboard";
+import MainPage from "./components/MainPage/MainPage";
 import { Routes, Route } from "react-router-dom";
 import InventoryTable from "./components/Inventory/Inventory";
 import WarehousePage from "./components/Inventory/warehousepage";
@@ -92,7 +92,7 @@ function App() {
           <main className="flex-1 overflow-y-auto bg-transparent">
             <div className="p-6 space-y-6">
               <Routes>
-                <Route path="/" element={<Dashboard />} />
+                <Route path="/" element={<MainPage />} />
                 <Route path="/inventory*" element={<WarehousePage />} />
                 <Route path="/inventory/:category" element={<InventoryTable />} />
                 <Route path="/tasks" element={<Tasks />} />
