@@ -7,8 +7,7 @@ import ModalRaw from "../ModalWindows/ModalRaw";
 import { sidebarButtons } from "../data/SidebarButtons";
 
 import WoodTable from "../ui/WoodTable";
-import ToolsTable from "../ui/ToolsTable";
-import MachineTable from "../ui/MachineTable";
+
 
 export {
   ModalMachine,
@@ -18,6 +17,4 @@ export {
   ModalRaw,
   sidebarButtons,
   WoodTable,
-  ToolsTable,
-  MachineTable,
-};
+}

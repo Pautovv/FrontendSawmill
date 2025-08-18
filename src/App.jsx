@@ -3,19 +3,12 @@ import Sidebar from "./components/Layout/Sidebar";
 import Header from "./components/Layout/Header";
 import Dashboard from "./components/Dashboard/Dashboard";
 import { Routes, Route } from "react-router-dom";
-import Inventory from "./components/Inventory/Inventory";
+import InventoryTable from "./components/Inventory/Inventory";
+import WarehousePage from "./components/Inventory/warehousepage";
 import Tasks from "./components/Tasks/Tasks";
 import Auth from "./components/Auth/Auth";
 import Reports from "./components/Reports/Reports";
 import Settings from "./components/Settings/Settings";
-import ToolsStorage from "./components/Inventory/pages/ToolsStorage";
-import MachineStorage from "./components/Inventory/pages/MachineStorage";
-import LogStorage from "./components/Inventory/pages/LogStorage";
-import BoardNaturalHumidyStorage from "./components/Inventory/pages/BoardNaturalHumidyStorage";
-import DryLumberStorage from "./components/Inventory/pages/DryLumberStorage";
-import PlanedProductsStorage from "./components/Inventory/pages/PlanedProductsStorage";
-import PaintsVarnishesStorage from "./components/Inventory/pages/PaintsVarnishesStorage";
-import FurnitureStorage from "./components/Inventory/pages/FurnitureStorage";
 
 const API_URL = "http://localhost:3001";
 
@@ -100,18 +93,11 @@ function App() {
             <div className="p-6 space-y-6">
               <Routes>
                 <Route path="/" element={<Dashboard />} />
-                <Route path="/inventory" element={<Inventory />} />
+                <Route path="/inventory*" element={<WarehousePage />} />
+                <Route path="/inventory/:category" element={<InventoryTable />} />
                 <Route path="/tasks" element={<Tasks />} />
                 <Route path="/reports" element={<Reports />} />
                 <Route path="/settings" element={<Settings />} />
-                <Route path="/inventory/log_storage" element={<LogStorage />} />
-                <Route path="/inventory/lumber_nathum_storage" element={<BoardNaturalHumidyStorage />} />
-                <Route path="/inventory/dry_lumber_storage" element={<DryLumberStorage />} />
-                <Route path="/inventory/planed_products_storage" element={<PlanedProductsStorage />} />
-                <Route path="/inventory/paintsvarnishes_storage" element={<PaintsVarnishesStorage />} />
-                <Route path="/inventory/furniture_storage" element={<FurnitureStorage />} />
-                <Route path="/inventory/tools_storage" element={<ToolsStorage />} />
-                <Route path="/inventory/machine_storage" element={<MachineStorage />} />
               </Routes>
             </div>
           </main>

@@ -38,7 +38,7 @@ export default function ModalProfile({ onClose }) {
     fetch("http://localhost:3001/profiles", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: profileName, operationsIds: selectedOperations }),
+      body: JSON.stringify({ name: profileName, operationIds: selectedOperations }),
     })
       .then(res => {
         if (!res.ok) throw new Error("Ошибка сохранения профиля");

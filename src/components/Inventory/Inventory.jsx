@@ -1,82 +1,160 @@
-import React, { useState } from "react";
-import { Link } from "react-router-dom";
-import {
-  ModalMachine,
-  ModalOperation,
-  ModalProfile,
-  ModalPassport,
-  ModalRaw,
-  sidebarButtons
-} from "./Imports/imports";
+import React, { useState, useEffect } from "react";
+import { useParams } from "react-router-dom";
+import axios from "axios";
 
-export default function WarehousePage() {
-  const [modalType, setModalType] = useState(null);
+function InventoryTable() {
+  const { category } = useParams();
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [allKeys, setAllKeys] = useState([]); // все уникальные характеристики
+  const [showAddItemModal, setShowAddItemModal] = useState(false);
+
+  useEffect(() => {
+    if (!category) return;
+    setLoading(true);
+    axios
+      .get(`http://localhost:3001/items/${category}`)
+      .then((res) => {
+        setItems(res.data);
+
+        // формируем список всех уникальных ключей (характеристик)
+        const keys = Array.from(
+          new Set(res.data.flatMap((item) => item.fields.map((f) => f.key)))
+        );
+        setAllKeys(keys);
+        setLoading(false);
+      })
+      .catch(() => setLoading(false));
+  }, [category]);
+
+  if (loading) return <p>Загрузка...</p>;
 
   return (
-    <div className="flex gap-10 px-8 py-10 bg-white dark:bg-black min-h-screen transition-all duration-300 text-[15px]">
+    <>
+      <button
+        onClick={() => setShowAddItemModal(true)}
+        className="mb-4 bg-blue-500 text-white px-3 py-1 rounded"
+      >
+        Добавить предмет
+      </button>
 
-      {/* Sidebar */}
-      <aside className="w-60 flex flex-col gap-3">
-        {sidebarButtons.map((btn) => {
-          const Icon = btn.icon;
-          return (
-            <button
-              key={btn.id}
-              onClick={() => setModalType(btn.id)}
-              className={`flex items-center gap-3 px-4 py-2.5 rounded-xl font-medium shadow-sm transition-all ${btn.color} focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-black dark:focus:ring-white`}
+      {items.length === 0 && (
+        <p className="mb-4 text-gray-500">Нет предметов в этой категории</p>
+      )}
+
+      <table className="w-full border-collapse border border-neutral-300 dark:border-neutral-600">
+        <thead>
+          <tr className="bg-gray-100 dark:bg-neutral-700">
+            <th>Название</th>
+            {allKeys.map((key) => (
+              <th key={key}>{key}</th>
+            ))}
+            <th>Действия</th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.map((item) => (
+            <tr
+              key={item.id}
+              className="hover:bg-gray-50 dark:hover:bg-neutral-800"
             >
-              <Icon className="w-5 h-5" />
-              <span className="truncate">{btn.label}</span>
-            </button>
-          );
-        })}
-      </aside>
+              <td>{item.name}</td>
+              {allKeys.map((key) => {
+                const field = item.fields.find((f) => f.key === key);
+                return <td key={key}>{field ? field.value : ""}</td>;
+              })}
+              <td>
+                <button
+                  onClick={() => {
+                    axios
+                      .delete(`http://localhost:3001/items/${item.id}`)
+                      .then(() =>
+                        setItems(items.filter((i) => i.id !== item.id))
+                      );
+                  }}
+                  className="text-red-600"
+                >
+                  Удалить
+                </button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
 
-      {/* Main Section */}
-      <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 p-6">
-        {[
-          { to: "/inventory/log_storage", label: "Бревно" },
-          { to: "/inventory/lumber_nathum_storage", label: "Пиломатериалы естественной влажности" },
-          { to: "/inventory/dry_lumber_storage", label: "Пиломатериалы сухие" },
-          { to: "/inventory/planed_products_storage", label: "Строганная продукция" },
-          { to: "/inventory/paintsvarnishes_storage", label: "Лакокрасочная продукция" },
-          { to: "/inventory/furniture_storage", label: "Фурнитура" },
-          { to: "/inventory/tools_storage", label: "Инструменты" },
-          { to: "/inventory/machine_storage", label: "Станки" }
-        ].map((item) => (
-          <Link
-            key={item.to}
-            to={item.to}
-            className="block bg-white dark:bg-neutral-800 rounded-2xl shadow-md hover:shadow-lg transform hover:-translate-y-1 transition-all duration-300 p-6 border border-neutral-200 dark:border-neutral-700"
-          >
-            <h2 className="text-xl font-semibold text-neutral-900 dark:text-neutral-100 mb-2">
-              {item.label}
-            </h2>
-            <p className="text-sm text-neutral-500 dark:text-neutral-400">
-              Перейти в раздел
-            </p>
-          </Link>
+      {showAddItemModal && (
+        <AddItemModal
+          category={category}
+          allKeys={allKeys}
+          onClose={() => setShowAddItemModal(false)}
+          onSave={(newItem) => {
+            setItems([...items, newItem]);
+            setShowAddItemModal(false);
+          }}
+        />
+      )}
+    </>
+  );
+}
+
+function AddItemModal({ category, allKeys, onClose, onSave }) {
+  const [name, setName] = useState("");
+  const [fields, setFields] = useState(allKeys.map((key) => ({ key, value: "" })));
+
+  const handleAddField = () => setFields([...fields, { key: "", value: "" }]);
+  const handleChangeField = (index, field) => {
+    const newFields = [...fields];
+    newFields[index] = field;
+    setFields(newFields);
+  };
+
+  const handleSave = () => {
+    axios
+      .post("http://localhost:3001/items", { categoryId: Number(category), name, fields })
+      .then(res => onSave(res.data))
+      .catch(err => alert(err.message));
+  };
+
+  return (
+    <div className="fixed inset-0 flex items-center justify-center bg-black/50 z-50">
+      <div className="bg-white dark:bg-neutral-800 p-6 rounded-2xl shadow-lg w-full max-w-md">
+        <h3 className="text-lg font-semibold mb-4">Добавить новый предмет</h3>
+        <input
+          type="text"
+          placeholder="Название предмета"
+          value={name}
+          onChange={e => setName(e.target.value)}
+          className="w-full mb-3 px-3 py-2 rounded-lg border dark:bg-neutral-900"
+        />
+
+        {fields.map((field, i) => (
+          <div key={i} className="flex gap-2 mb-2">
+            <input
+              type="text"
+              placeholder="Название характеристики"
+              value={field.key}
+              onChange={e => handleChangeField(i, { ...field, key: e.target.value })}
+              className="flex-1 px-2 py-1 rounded border"
+            />
+            <input
+              type="text"
+              placeholder="Значение"
+              value={field.value}
+              onChange={e => handleChangeField(i, { ...field, value: e.target.value })}
+              className="flex-1 px-2 py-1 rounded border"
+            />
+          </div>
         ))}
-      </section>
 
+        <button onClick={handleAddField} className="mb-3 text-blue-600">Добавить характеристику</button>
 
-
-      {modalType === "machine" && (
-        <ModalMachine onClose={() => setModalType(null)} />
-      )}
-      {modalType === "operation" && (
-        <ModalOperation onClose={() => setModalType(null)} />
-      )}
-      {modalType === "profile" && (
-        <ModalProfile onClose={() => setModalType(null)} />
-      )}
-      {modalType === "passport" && (
-        <ModalPassport onClose={() => setModalType(null)} />
-      )}
-      {modalType === "raw" && (
-        <ModalRaw onClose={() => setModalType(null)} />
-      )}
-
+        <div className="flex justify-end gap-2">
+          <button onClick={onClose} className="px-4 py-2 rounded-lg bg-gray-300 dark:bg-neutral-700">Отмена</button>
+          <button onClick={handleSave} className="px-4 py-2 rounded-lg bg-blue-600 text-white">Сохранить</button>
+        </div>
+      </div>
     </div>
   );
 }
+
+export default InventoryTable;

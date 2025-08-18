@@ -1,11 +1,30 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 
 export default function ModalMachine({ onClose }) {
   const [name, setName] = useState("");
   const [quantity, setQuantity] = useState("");
-  const [unit, setUnit] = useState("");
+  const [inputUnit, setInputUnit] = useState("");
   const [category, setCategory] = useState("LOGS");
   const [location, setLocation] = useState("");
+  const [shelf, setShelf] = useState("");
+  const [units, setUnits] = useState([]);
+
+  // Подгрузка единиц при смене категории
+  useEffect(() => {
+    const fetchUnits = async () => {
+      try {
+        const response = await fetch(`http://localhost:3001/units?category=${category}`);
+        if (!response.ok) throw new Error("Ошибка при загрузке единиц");
+        const data = await response.json();
+        setUnits(data);
+        // автоматически выбираем первую единицу из списка
+        setInputUnit(data[0]?.unit || "");
+      } catch (error) {
+        console.error(error);
+      }
+    };
+    fetchUnits();
+  }, [category]);
 
   const handleSave = async () => {
     try {
@@ -15,15 +34,14 @@ export default function ModalMachine({ onClose }) {
         body: JSON.stringify({
           name,
           quantity: parseInt(quantity, 10),
-          unit,
           category,
           location,
+          shelf,
+          inputUnit,
         }),
       });
 
-      if (!response.ok) {
-        throw new Error("Ошибка при добавлении товара");
-      }
+      if (!response.ok) throw new Error("Ошибка при добавлении товара");
 
       const data = await response.json();
       console.log("Товар добавлен:", data);
@@ -69,13 +87,17 @@ export default function ModalMachine({ onClose }) {
 
         <div className="mb-4">
           <label className="block text-sm font-medium mb-1">Единицы измерения</label>
-          <input
-            type="text"
-            placeholder="Например: 50"
-            value={unit}
-            onChange={(e) => setUnit(e.target.value)}
+          <select
+            value={inputUnit}
+            onChange={(e) => setInputUnit(e.target.value)}
             className="w-full p-3 rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-800 text-black dark:text-white"
-          />
+          >
+            {units.map((u) => (
+              <option key={u.unit} value={u.unit}>
+                {u.unit}
+              </option>
+            ))}
+          </select>
         </div>
 
         <div className="mb-4">
@@ -106,6 +128,18 @@ export default function ModalMachine({ onClose }) {
             className="w-full p-3 rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-800 text-black dark:text-white"
           />
         </div>
+
+        <div className="mb-6">
+          <label className="block text-sm font-medium mb-1">Полка</label>
+          <input
+            type="text"
+            placeholder="Например: Полка A3"
+            value={shelf}
+            onChange={(e) => setShelf(e.target.value)}
+            className="w-full p-3 rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-800 text-black dark:text-white"
+          />
+        </div>
+
 
         <button
           onClick={handleSave}

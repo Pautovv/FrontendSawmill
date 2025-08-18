@@ -260,7 +260,7 @@ export default function Tasks() {
                                         className="bg-white dark:bg-black border border-slate-200 dark:border-slate-700 shadow-sm rounded-2xl px-6 py-6 space-y-5 transition-all"
                                     >
                                         <h4 className="text-slate-800 dark:text-white font-semibold text-base">
-                                            Шаг {idx + 1}: <span className="font-normal text-slate-600 dark:text-slate-300">{step}</span>
+                                            Шаг {idx + 1}: <span className="font-normal text-slate-600 dark:text-slate-300"></span>
                                         </h4>
 
                                         <div>
