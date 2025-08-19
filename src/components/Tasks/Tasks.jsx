@@ -192,6 +192,8 @@ function AssignTaskModal({ techCardId, onClose, onSaved }) {
                 name: taskName.trim() || undefined,
                 fields: fields.filter((f) => f.key && f.value),
                 assignments,
+                // Если у вас нет puppeteer на бэке и не нужны мгновенные PDF — отключите предгенерацию
+                preGeneratePdfs: false,
             };
             const res = await fetch(`${API}/tasks`, {
                 method: 'POST',
@@ -199,9 +201,15 @@ function AssignTaskModal({ techCardId, onClose, onSaved }) {
                 body: JSON.stringify(payload),
             });
             if (!res.ok) throw new Error(await res.text());
-            await res.json();
+            const data = await res.json();
+
+            // Автоматически открыть страницу печати всех документов задания
+            if (data?.printAllUrl) {
+                window.open(`${API}${data.printAllUrl}`, '_blank', 'noopener');
+            }
             setOk('Задание успешно сохранено');
-            setTimeout(() => onSaved?.(), 700);
+            // Закрыть модалку чуть позже
+            setTimeout(() => onSaved?.(), 600);
         } catch (e) {
             console.error(e);
             setError(e?.message || 'Ошибка сохранения задания');

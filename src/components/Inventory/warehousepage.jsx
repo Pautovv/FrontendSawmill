@@ -2,6 +2,8 @@ import React, { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import axios from "axios";
 
+const API = "http://localhost:3001";
+
 export default function WarehousePage() {
   const [sections, setSections] = useState([]);
   const [newLabel, setNewLabel] = useState("");
@@ -9,7 +11,7 @@ export default function WarehousePage() {
   const [contextMenu, setContextMenu] = useState(null);
 
   useEffect(() => {
-    axios.get("http://localhost:3001/categories").then((res) => {
+    axios.get(`${API}/categories`).then((res) => {
       const cats = res.data.map((cat) => ({
         id: cat.id,
         label: cat.name,
@@ -24,24 +26,28 @@ export default function WarehousePage() {
     if (!name) return;
     const path = name.toLowerCase().replace(/\s+/g, "_");
 
-    axios.post("http://localhost:3001/categories", { name, path })
+    axios
+      .post(`${API}/categories`, { name, path })
       .then((res) => {
         const cat = res.data;
-        setSections([...sections, {
-          id: cat.id,
-          label: cat.name,
-          to: `/inventory/${cat.id}`,
-        }]);
+        setSections((prev) => [
+          ...prev,
+          {
+            id: cat.id,
+            label: cat.name,
+            to: `/inventory/${cat.id}`,
+          },
+        ]);
         setNewLabel("");
         setShowAddModal(false);
       })
-      .catch(err => alert("Ошибка при добавлении: " + err.message));
+      .catch((err) => alert("Ошибка при добавлении: " + err.message));
   };
 
   const handleDeleteSection = (index) => {
     const cat = sections[index];
-    axios.delete(`http://localhost:3001/categories/${cat.id}`).then(() => {
-      setSections(sections.filter((_, i) => i !== index));
+    axios.delete(`${API}/categories/${cat.id}`).then(() => {
+      setSections((prev) => prev.filter((_, i) => i !== index));
       setContextMenu(null);
     });
   };
