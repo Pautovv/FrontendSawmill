@@ -11,45 +11,34 @@ export default function WarehousePage() {
   const [contextMenu, setContextMenu] = useState(null);
 
   useEffect(() => {
-    axios.get(`${API}/categories`).then((res) => {
-      const cats = res.data.map((cat) => ({
-        id: cat.id,
-        label: cat.name,
-        to: `/inventory/${cat.id}`,
-      }));
-      setSections(cats);
+    axios.get(`${API}/categories/children`).then((res) => {
+      setSections(res.data || []);
     });
   }, []);
 
   const handleAddSection = () => {
     const name = newLabel.trim();
     if (!name) return;
-    const path = name.toLowerCase().replace(/\s+/g, "_");
 
     axios
-      .post(`${API}/categories`, { name, path })
+      .post(`${API}/categories`, { name })
       .then((res) => {
-        const cat = res.data;
-        setSections((prev) => [
-          ...prev,
-          {
-            id: cat.id,
-            label: cat.name,
-            to: `/inventory/${cat.id}`,
-          },
-        ]);
+        setSections((prev) => [...prev, res.data]);
         setNewLabel("");
         setShowAddModal(false);
       })
-      .catch((err) => alert("Ошибка при добавлении: " + err.message));
+      .catch((err) => alert("Ошибка при добавлении: " + (err?.response?.data?.message || err.message)));
   };
 
   const handleDeleteSection = (index) => {
     const cat = sections[index];
-    axios.delete(`${API}/categories/${cat.id}`).then(() => {
-      setSections((prev) => prev.filter((_, i) => i !== index));
-      setContextMenu(null);
-    });
+    axios
+      .delete(`${API}/categories/${cat.id}`)
+      .then(() => {
+        setSections((prev) => prev.filter((_, i) => i !== index));
+        setContextMenu(null);
+      })
+      .catch((err) => alert(err?.response?.data?.message || err.message));
   };
 
   return (
@@ -61,15 +50,15 @@ export default function WarehousePage() {
         {sections.map((item, index) => (
           <Link
             key={item.id}
-            to={item.to}
+            to={`/inventory/${encodeURI(item.path)}`}
             onContextMenu={(e) => {
               e.preventDefault();
               setContextMenu({ x: e.clientX, y: e.clientY, index });
             }}
             className="block bg-white dark:bg-neutral-800 rounded-2xl shadow-md hover:shadow-lg transform hover:-translate-y-1 transition-all duration-300 p-6 border border-neutral-200 dark:border-neutral-700"
           >
-            <h2 className="text-xl font-semibold mb-2">{item.label}</h2>
-            <p className="text-sm text-neutral-500">Перейти в раздел</p>
+            <h2 className="text-xl font-semibold mb-2">{item.name}</h2>
+            <p className="text-sm text-neutral-500">{item.path}</p>
           </Link>
         ))}
 

@@ -8,7 +8,6 @@ import WarehousePage from "./components/Inventory/warehousepage";
 import Tasks from "./components/Tasks/Tasks";
 import Auth from "./components/Auth/Auth";
 import Reports from "./components/Reports/Reports";
-import Settings from "./components/Settings/Settings";
 
 const API_URL = "http://localhost:3001";
 
@@ -35,7 +34,7 @@ function App() {
         if (storedUser) {
           try {
             setUser(JSON.parse(storedUser));
-          } catch {}
+          } catch { }
         }
 
         if (storedToken) {
@@ -93,11 +92,10 @@ function App() {
             <div className="p-6 space-y-6">
               <Routes>
                 <Route path="/" element={<MainPage />} />
-                <Route path="/inventory*" element={<WarehousePage />} />
-                <Route path="/inventory/:category" element={<InventoryTable />} />
+                <Route path="/inventory" element={<WarehousePage />} />
+                <Route path="/inventory/*" element={<InventoryTable />} />
                 <Route path="/tasks" element={<Tasks />} />
                 <Route path="/reports" element={<Reports />} />
-                <Route path="/settings" element={<Settings />} />
               </Routes>
             </div>
           </main>

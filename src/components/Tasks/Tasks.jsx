@@ -272,9 +272,7 @@ function AssignTaskModal({ techCardId, onClose, onSaved }) {
                             const leadSelected = assignments[i].leadUserIds;
                             const memberSelected = assignments[i].memberUserIds;
 
-                            // скрываем из списка "Главные" тех, кто уже выбран как "Остальные" на этом шаге
                             const leadAvailableUsers = filteredUsers.filter((u) => !memberSelected.includes(u.id));
-                            // скрываем из "Остальные" тех, кто выбран как "Главные"
                             const memberAvailableUsers = filteredUsers.filter((u) => !leadSelected.includes(u.id));
 
                             const selectedLeadUsers = users.filter((u) => leadSelected.includes(u.id));

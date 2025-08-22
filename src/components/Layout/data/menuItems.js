@@ -24,9 +24,4 @@ export const menuItems = [
         label: "Отчеты",
         icon: FileText,
     },
-    {
-        id: "settings",
-        label: "Настройки",
-        icon: Settings,
-    },
 ];

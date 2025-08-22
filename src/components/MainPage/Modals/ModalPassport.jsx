@@ -1,7 +1,6 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 
 const API_BASE = 'http://localhost:3001';
-const DEFAULT_EXCLUDE = 'станки,инструмент';
 
 function randomId() {
   if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
@@ -11,10 +10,9 @@ function randomId() {
 export default function ModalPassport({ onClose, onCreated }) {
   const [name, setName] = useState('');
   const [steps, setSteps] = useState([]);
-  const [operations, setOperations] = useState([]);
-  const [categories, setCategories] = useState([]); 
-  const [materials, setMaterials] = useState([]);   
+  const [specMaterials, setSpecMaterials] = useState([]); // справочник материалов (MaterialSpec)
   const [units, setUnits] = useState([]);
+  const [machines, setMachines] = useState([]); // станки (items по категории "станки")
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState('');
 
@@ -25,24 +23,21 @@ export default function ModalPassport({ onClose, onCreated }) {
     setSteps([]);
     (async () => {
       try {
-        const [opsRes, catsRes, matsRes, unitsRes] = await Promise.all([
-          fetch(`${API_BASE}/operations`),
-          fetch(`${API_BASE}/categories/available?exclude=${encodeURIComponent(DEFAULT_EXCLUDE)}`),
-          fetch(`${API_BASE}/items/available?exclude=${encodeURIComponent(DEFAULT_EXCLUDE)}`),
-          fetch(`${API_BASE}/units/available?exclude=${encodeURIComponent(DEFAULT_EXCLUDE)}`),
+        const [specsRes, unitsRes, machinesRes] = await Promise.all([
+          fetch(`${API_BASE}/spec-materials`),
+          fetch(`${API_BASE}/units/available`),
+          fetch(`${API_BASE}/items/by-category?categoryPath=${encodeURIComponent('станки')}`),
         ]);
-        if (!opsRes.ok || !catsRes.ok || !matsRes.ok || !unitsRes.ok) throw new Error('Не удалось загрузить справочники');
-        const [ops, cats, mats, unitList] = await Promise.all([
-          opsRes.json(),
-          catsRes.json(),
-          matsRes.json(),
+        if (!specsRes.ok || !unitsRes.ok || !machinesRes.ok) throw new Error('Не удалось загрузить справочники');
+        const [specs, unitList, machinesList] = await Promise.all([
+          specsRes.json(),
           unitsRes.json(),
+          machinesRes.json(),
         ]);
         if (!ignore) {
-          setOperations(ops);
-          setCategories(cats);
-          setMaterials(mats);   // каждый item включает { category: { id, name, path } }
+          setSpecMaterials(specs); // [{id, name, category?}]
           setUnits(unitList);
+          setMachines(machinesList);
         }
       } catch (e) {
         if (!ignore) setErr(e?.message || 'Ошибка загрузки данных');
@@ -57,10 +52,7 @@ export default function ModalPassport({ onClose, onCreated }) {
       {
         tempId: randomId(),
         name: '',
-        operationId: '',
         machineItemId: '',
-        // локальный фильтр категории для материалов в этом шаге (path)
-        materialsCategoryFilter: '',
         materials: [],
         fields: [],
       },
@@ -100,13 +92,13 @@ export default function ModalPassport({ onClose, onCreated }) {
 
       const payload = {
         name: name.trim(),
-        steps: steps.map((s) => ({
+        steps: steps.map((s, idx) => ({
+          order: idx + 1,
           name: s.name.trim(),
-          operationId: s.operationId ? Number(s.operationId) : undefined,
           machineItemId: s.machineItemId ? Number(s.machineItemId) : undefined,
           materials: (s.materials || []).map((m) => ({
-            materialItemId: Number(m.materialItemId),
-            quantity: Number(m.quantity),
+            materialSpecId: Number(m.materialSpecId),
+            quantity: Number(m.quantity ?? 1),
             unitId: m.unitId ? Number(m.unitId) : undefined,
           })),
           fields: (s.fields || []).filter((f) => f.key && f.value),
@@ -159,22 +151,15 @@ export default function ModalPassport({ onClose, onCreated }) {
             />
           </label>
 
-          <div className="my-3">
-            <button onClick={addStep} className="rounded-lg bg-neutral-100 dark:bg-neutral-800 px-3 py-2 text-sm hover:bg-neutral-200 dark:hover:bg-neutral-700">
-              + Добавить шаг
-            </button>
-          </div>
-
           <div className="space-y-3">
             {steps.map((step, idx) => (
               <StepEditor
                 key={step.tempId}
                 index={idx + 1}
                 step={step}
-                operations={operations}
-                categories={categories}
-                materials={materials}
+                specMaterials={specMaterials}
                 units={units}
+                machines={machines}
                 onChange={(patch) => updateStep(step.tempId, patch)}
                 onRemove={() => removeStep(step.tempId)}
                 onMoveUp={() => moveStep(step.tempId, -1)}
@@ -184,11 +169,17 @@ export default function ModalPassport({ onClose, onCreated }) {
           </div>
         </div>
 
-        <div className="sticky bottom-0 z-10 flex items-center justify-end gap-2 border-t border-neutral-200 dark:border-neutral-800 px-5 py-3 bg-white/90 dark:bg-neutral-900/90 backdrop-blur">
-          <button onClick={onClose} className="rounded-lg px-4 py-2 text-sm hover:bg-neutral-100 dark:hover:bg-neutral-800" disabled={loading}>Отмена</button>
-          <button onClick={handleSubmit} className="rounded-lg bg-black text-white dark:bg-white dark:text-black px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50" disabled={loading || !name.trim() || steps.length === 0}>
-            {loading ? 'Сохранение…' : 'Создать'}
+        <div className="sticky bottom-0 z-10 flex items-center justify-between gap-2 border-t border-neutral-200 dark:border-neutral-800 px-5 py-3 bg-white/90 dark:bg-neutral-900/90 backdrop-blur">
+          <button onClick={addStep} className="rounded-lg bg-neutral-100 dark:bg-neutral-800 px-3 py-2 text-sm hover:bg-neutral-200 dark:hover:bg-neutral-700" disabled={loading}>
+            + Добавить шаг
           </button>
+
+          <div className="flex items-center gap-2">
+            <button onClick={onClose} className="rounded-lg px-4 py-2 text-sm hover:bg-neutral-100 dark:hover:bg-neutral-800" disabled={loading}>Отмена</button>
+            <button onClick={handleSubmit} className="rounded-lg bg-black text-white dark:bg-white dark:text-black px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50" disabled={loading || !name.trim() || steps.length === 0}>
+              {loading ? 'Сохранение…' : 'Создать'}
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -198,36 +189,21 @@ export default function ModalPassport({ onClose, onCreated }) {
 function StepEditor({
   index,
   step,
-  operations,
-  categories,
-  materials,
+  specMaterials,
   units,
+  machines,
   onChange,
   onRemove,
   onMoveUp,
   onMoveDown,
 }) {
-  const op = useMemo(() => {
-    const id = step.operationId ? Number(step.operationId) : -1;
-    return operations.find((o) => o.id === id);
-  }, [operations, step.operationId]);
-
-  const machineOptions = op?.machines || [];
-
-  // Категория-фильтр по path (локально на шаг)
-  const filterPath = step.materialsCategoryFilter || '';
-  const filteredMaterials = useMemo(() => {
-    if (!filterPath) return materials;
-    return (materials || []).filter((m) => m?.category?.path?.startsWith(filterPath));
-  }, [materials, filterPath]);
-
   const addMaterial = () => {
-    const defaultMatId = filteredMaterials[0]?.id ?? materials[0]?.id ?? '';
+    const defaultSpecId = specMaterials[0]?.id ?? '';
     const defaultUnitId = units[0]?.id ?? '';
     onChange({
       materials: [
         ...(step.materials || []),
-        { materialItemId: defaultMatId, quantity: 1, unitId: defaultUnitId },
+        { materialSpecId: defaultSpecId, quantity: 1, unitId: defaultUnitId },
       ],
     });
   };
@@ -277,52 +253,20 @@ function StepEditor({
         />
       </label>
 
-      <div className="mb-3 grid grid-cols-1 gap-3 md:grid-cols-3">
-        <label className="flex flex-col gap-1">
-          <span className="text-sm text-neutral-600 dark:text-neutral-300">Операция</span>
-          <select
-            className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 px-3 py-2 outline-none focus:ring-2 focus:ring-black dark:focus:ring-white"
-            value={step.operationId ?? ''}
-            onChange={(e) => {
-              const value = e.target.value ? Number(e.target.value) : '';
-              onChange({ operationId: value, machineItemId: '' });
-            }}
-          >
-            <option value="">— Не выбрано —</option>
-            {operations.map((op) => (
-              <option key={op.id} value={op.id}>{op.name}</option>
-            ))}
-          </select>
-        </label>
-
+      <div className="mb-3 grid grid-cols-1 gap-3 md:grid-cols-2">
         <label className="flex flex-col gap-1">
           <span className="text-sm text-neutral-600 dark:text-neutral-300">Станок</span>
           <select
-            className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 px-3 py-2 outline-none focus:ring-2 focus:ring-black dark:focus:ring-white disabled:opacity-50"
-            disabled={!op || machineOptions.length === 0}
+            className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 px-3 py-2 outline-none focus:ring-2 focus:ring-black dark:focus:ring-white"
             value={step.machineItemId ?? ''}
             onChange={(e) => {
               const value = e.target.value ? Number(e.target.value) : '';
               onChange({ machineItemId: value });
             }}
           >
-            <option value="">{op && machineOptions.length ? '— Выберите станок —' : 'Недоступно'}</option>
-            {machineOptions.map((m) => (
+            <option value="">— Не выбран —</option>
+            {machines.map((m) => (
               <option key={m.id} value={m.id}>{m.name}</option>
-            ))}
-          </select>
-        </label>
-
-        <label className="flex flex-col gap-1">
-          <span className="text-sm text-neutral-600 dark:text-neutral-300">Категория материалов (фильтр)</span>
-          <select
-            className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 px-3 py-2 outline-none focus:ring-2 focus:ring-black dark:focus:ring-white"
-            value={filterPath}
-            onChange={(e) => onChange({ materialsCategoryFilter: e.target.value })}
-          >
-            <option value="">Все категории</option>
-            {categories.map((c) => (
-              <option key={c.id} value={c.path}>{c.name}</option>
             ))}
           </select>
         </label>
@@ -330,7 +274,7 @@ function StepEditor({
 
       <div className="mt-2">
         <div className="mb-2 flex items-center justify-between">
-          <strong className="text-sm">Материалы</strong>
+          <strong className="text-sm">Сырьё (материалы)</strong>
           <button onClick={addMaterial} className="rounded-md bg-neutral-100 dark:bg-neutral-800 px-2 py-1 text-sm hover:bg-neutral-200 dark:hover:bg-neutral-700">
             + Добавить материал
           </button>
@@ -344,15 +288,15 @@ function StepEditor({
           {(step.materials || []).map((m, i) => (
             <div key={i} className="grid grid-cols-1 gap-2 md:grid-cols-4">
               <label className="flex flex-col gap-1 md:col-span-2">
-                <span className="text-sm text-neutral-600 dark:text-neutral-300">Материал</span>
+                <span className="text-sm text-neutral-600 dark:text-neutral-300">Материал (спецификация)</span>
                 <select
                   className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 px-3 py-2 outline-none focus:ring-2 focus:ring-black dark:focus:ring-white"
-                  value={m.materialItemId}
-                  onChange={(e) => updateMaterial(i, { materialItemId: Number(e.target.value) })}
+                  value={m.materialSpecId}
+                  onChange={(e) => updateMaterial(i, { materialSpecId: Number(e.target.value) })}
                 >
-                  {filteredMaterials.map((mat) => (
-                    <option key={mat.id} value={mat.id}>
-                      {mat.name} {mat?.category ? `— ${mat.category.name}` : ''}
+                  {specMaterials.map((sm) => (
+                    <option key={sm.id} value={sm.id}>
+                      {sm.name}{sm?.category ? ` — ${sm.category}` : ''}
                     </option>
                   ))}
                 </select>
@@ -362,22 +306,20 @@ function StepEditor({
                 <span className="text-sm text-neutral-600 dark:text-neutral-300">Кол-во</span>
                 <input
                   type="number"
-                  min="0"
-                  step="0.01"
+                  min={0}
+                  step="any"
                   className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 px-3 py-2 outline-none focus:ring-2 focus:ring-black dark:focus:ring-white"
-                  value={m.quantity}
+                  value={m.quantity ?? 1}
                   onChange={(e) => updateMaterial(i, { quantity: e.target.value })}
                 />
               </label>
 
               <label className="flex flex-col gap-1">
-                <span className="text-sm text-neutral-600 dark:text-neutral-300">Ед.</span>
+                <span className="text-sm text-neutral-600 dark:text-neutral-300">Ед. изм.</span>
                 <select
                   className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 px-3 py-2 outline-none focus:ring-2 focus:ring-black dark:focus:ring-white"
                   value={m.unitId ?? ''}
-                  onChange={(e) =>
-                    updateMaterial(i, { unitId: e.target.value ? Number(e.target.value) : '' })
-                  }
+                  onChange={(e) => updateMaterial(i, { unitId: e.target.value ? Number(e.target.value) : '' })}
                 >
                   <option value="">—</option>
                   {units.map((u) => (
