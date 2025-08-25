@@ -2,32 +2,61 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 
 const API = 'http://localhost:3001';
 
+// Если нужна передача cookie с сессией (passport-session / cookie auth) -> true
+const USE_CREDENTIALS = false; // поставь true если backend ждёт cookie
+
+// Функция нормализации в массив
+function toArray(val) {
+    if (Array.isArray(val)) return val;
+    if (val && Array.isArray(val.data)) return val.data;
+    if (val && Array.isArray(val.items)) return val.items;
+    return [];
+}
+
+// Универсально получить JSON без падения
+async function safeJson(res) {
+    try {
+        return await res.json();
+    } catch {
+        return null;
+    }
+}
+
 export default function TasksPage() {
     const [search, setSearch] = useState('');
     const [cards, setCards] = useState([]);
     const [loading, setLoading] = useState(false);
+    const [err, setErr] = useState('');
     const [selectedCardId, setSelectedCardId] = useState(null);
 
     useEffect(() => {
         let ignore = false;
         const load = async () => {
+            setErr('');
             setLoading(true);
             try {
-                // оставляем рабочий эндпоинт, как у вас сейчас
-                const res = await fetch(`${API}/tasks/tech-cards?search=${encodeURIComponent(search)}`);
-                const data = await res.json();
-                if (!ignore) setCards(data);
+                const url = `${API}/tasks/tech-cards?search=${encodeURIComponent(search)}`;
+                const res = await fetch(url, {
+                    credentials: USE_CREDENTIALS ? 'include' : 'same-origin',
+                });
+                if (!res.ok) {
+                    const txt = await res.text().catch(() => '');
+                    throw new Error(txt || `Ошибка загрузки (${res.status})`);
+                }
+                const data = await safeJson(res);
+                if (!ignore) setCards(toArray(data));
             } catch (e) {
-                console.error(e);
+                console.error('[TasksPage] load error', e);
+                if (!ignore) {
+                    setErr(e.message || 'Ошибка загрузки');
+                    setCards([]);
+                }
             } finally {
                 if (!ignore) setLoading(false);
             }
         };
-        const t = setTimeout(load, 300);
-        return () => {
-            ignore = true;
-            clearTimeout(t);
-        };
+        const t = setTimeout(load, 350); // debounce поиска
+        return () => { ignore = true; clearTimeout(t); };
     }, [search]);
 
     return (
@@ -37,30 +66,42 @@ export default function TasksPage() {
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
                     placeholder="Поиск паспорта по названию..."
-                    className="w-full max-w-xl px-4 py-2.5 rounded-xl border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900"
+                    className="w-full max-w-xl px-4 py-2.5 rounded-xl border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 outline-none focus:ring-2 focus:ring-black dark:focus:ring-white"
                 />
             </div>
 
-            {loading ? (
+            {err && (
+                <div className="mb-4 rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-700 dark:bg-red-900/30 dark:text-red-300">
+                    {err}
+                </div>
+            )}
+
+            {loading && !err && (
                 <div className="text-neutral-500">Загрузка...</div>
-            ) : (
+            )}
+
+            {!loading && !err && (
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                     {cards.map((c) => (
                         <div
                             key={c.id}
                             className="rounded-2xl border border-neutral-200 dark:border-neutral-700 p-5 bg-white dark:bg-neutral-900 shadow-sm hover:shadow-md transition"
                         >
-                            <div className="font-semibold mb-1">{c.name}</div>
-                            <div className="text-sm text-neutral-500 mb-4">Шагов: {c._count?.steps ?? 0}</div>
+                            <div className="font-semibold mb-1 line-clamp-2">{c.name}</div>
+                            <div className="text-sm text-neutral-500 mb-4">
+                                Шагов: {c._count?.steps ?? 0}
+                            </div>
                             <button
                                 onClick={() => setSelectedCardId(c.id)}
-                                className="px-4 py-2 rounded-xl bg-black text-white dark:bg-white dark:text-black hover:opacity-90 transition"
+                                className="px-4 py-2 rounded-xl bg-black text-white dark:bg-white dark:text-black hover:opacity-90 transition text-sm"
                             >
                                 Выдать задание
                             </button>
                         </div>
                     ))}
-                    {cards.length === 0 && <div className="text-neutral-500">Ничего не найдено</div>}
+                    {cards.length === 0 && (
+                        <div className="text-neutral-500">Ничего не найдено</div>
+                    )}
                 </div>
             )}
 
@@ -77,63 +118,128 @@ export default function TasksPage() {
 
 function AssignTaskModal({ techCardId, onClose, onSaved }) {
     const [card, setCard] = useState(null);
-    const [users, setUsers] = useState([]);
+    const [users, setUsers] = useState([]); // всегда массив
     const [searchUser, setSearchUser] = useState('');
     const [taskName, setTaskName] = useState('');
     const [fields, setFields] = useState([{ key: '', value: '' }]);
     const [assignments, setAssignments] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [loadingUsers, setLoadingUsers] = useState(true);
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState('');
     const [ok, setOk] = useState('');
+    const [usersError, setUsersError] = useState('');
     const lastFieldRef = useRef(null);
 
+    // Загрузка карточки + пользователей параллельно
     useEffect(() => {
         let ignore = false;
+        setLoading(true);
+        setError('');
+        setOk('');
+        setUsersError('');
+        setLoadingUsers(true);
+
+        // 1. Tech card
         (async () => {
             try {
-                const [cardRes, usersRes] = await Promise.all([
-                    fetch(`${API}/tasks/tech-cards/${techCardId}`),
-                    fetch(`${API}/users`),
-                ]);
-                const [cardData, usersData] = await Promise.all([cardRes.json(), usersRes.json()]);
+                const res = await fetch(`${API}/tasks/tech-cards/${techCardId}`, {
+                    credentials: USE_CREDENTIALS ? 'include' : 'same-origin',
+                });
+                if (!res.ok) {
+                    const txt = await res.text().catch(() => '');
+                    throw new Error(txt || `Ошибка загрузки техкарты (${res.status})`);
+                }
+                const data = await safeJson(res);
                 if (!ignore) {
-                    setCard(cardData);
-                    setUsers(usersData);
+                    setCard(data);
                     setAssignments(
-                        (cardData.steps || []).map((s) => ({
+                        (data?.steps || []).map((s) => ({
                             stepId: s.id,
                             leadUserIds: [],
                             memberUserIds: [],
-                        })),
+                        }))
                     );
-                    setTaskName(`${cardData.name} — задание`);
-                    setLoading(false);
+                    setTaskName(`${data?.name || 'Задание'} — задание`);
                 }
             } catch (e) {
-                console.error(e);
+                console.error('[AssignTaskModal] card load error', e);
+                if (!ignore) setError(e.message || 'Ошибка загрузки техкарты');
+            } finally {
                 if (!ignore) setLoading(false);
             }
         })();
-        return () => {
-            ignore = true;
-        };
+
+        // 2. Users (отдельно, чтобы даже при ошибке пользователей модалка не полностью ломалась)
+        (async () => {
+            try {
+                const token = localStorage.getItem('token'); // поменяй ключ если у тебя другой
+                const headers = {};
+                if (token) headers['Authorization'] = `Bearer ${token}`;
+
+                const res = await fetch(`${API}/users`, {
+                    headers,
+                    credentials: USE_CREDENTIALS ? 'include' : 'same-origin',
+                });
+
+                if (res.status === 401) {
+                    throw new Error('Не авторизовано (401). Выполни вход.');
+                }
+                if (!res.ok) {
+                    const txt = await res.text().catch(() => '');
+                    throw new Error(txt || `Ошибка загрузки пользователей (${res.status})`);
+                }
+                const raw = await safeJson(res);
+                if (!ignore) {
+                    setUsers(toArray(raw));
+                }
+            } catch (e) {
+                console.error('[AssignTaskModal] users load error', e);
+                if (!ignore) {
+                    setUsersError(e.message || 'Ошибка загрузки пользователей');
+                    setUsers([]); // пусто чтобы не падать
+                }
+            } finally {
+                if (!ignore) setLoadingUsers(false);
+            }
+        })();
+
+        return () => { ignore = true; };
     }, [techCardId]);
 
+    // Если количество assignments не совпадает с шагами, создаём безопасный массив
+    const safeAssignments =
+        (card?.steps?.length || 0) === assignments.length
+            ? assignments
+            : (card?.steps || []).map((s) => ({
+                stepId: s.id,
+                leadUserIds: [],
+                memberUserIds: [],
+            }));
+
+    // Фильтр пользователей
     const filteredUsers = useMemo(() => {
+        const base = Array.isArray(users) ? users : [];
         const q = searchUser.trim().toLowerCase();
-        if (!q) return users;
-        return users.filter((u) =>
-            `${u.lastName} ${u.firstName} ${u.email} ${u.role}`.toLowerCase().includes(q),
+        if (!q) return base;
+        return base.filter((u) =>
+            `${u.lastName || ''} ${u.firstName || ''} ${u.email || ''} ${u.role || ''}`
+                .toLowerCase()
+                .includes(q),
         );
     }, [users, searchUser]);
 
-    const formatUserName = (u) => `${u.lastName} ${u.firstName}`;
-    const initials = (u) => `${(u.lastName?.[0] ?? '').toUpperCase()}${(u.firstName?.[0] ?? '').toUpperCase()}`;
+    const formatUserName = (u) => `${u.lastName || ''} ${u.firstName || ''}`.trim();
+    const initials = (u) =>
+        `${(u.lastName?.[0] ?? '').toUpperCase()}${(u.firstName?.[0] ?? '').toUpperCase()}` || 'U';
 
     const toggleUser = (stepIndex, type, userId) => {
         setAssignments((prev) => {
-            const copy = [...prev];
+            const base =
+                (card?.steps?.length || 0) === prev.length ? prev : safeAssignments;
+            const copy = [...base];
+            if (!copy[stepIndex]) return copy;
+
             const targetKey = type === 'lead' ? 'leadUserIds' : 'memberUserIds';
             const otherKey = type === 'lead' ? 'memberUserIds' : 'leadUserIds';
             const target = new Set(copy[stepIndex][targetKey]);
@@ -142,10 +248,10 @@ function AssignTaskModal({ techCardId, onClose, onSaved }) {
             if (target.has(userId)) {
                 target.delete(userId);
             } else {
-                // убираем из другой роли и добавляем в текущую
                 other.delete(userId);
                 target.add(userId);
             }
+
             copy[stepIndex] = {
                 ...copy[stepIndex],
                 [targetKey]: Array.from(target),
@@ -156,15 +262,16 @@ function AssignTaskModal({ techCardId, onClose, onSaved }) {
     };
 
     const setField = (idx, key, value) => {
-        const copy = [...fields];
-        copy[idx] = { ...copy[idx], [key]: value };
-        setFields(copy);
+        setFields((prev) => {
+            const copy = [...prev];
+            copy[idx] = { ...copy[idx], [key]: value };
+            return copy;
+        });
     };
 
     const addField = () => {
         setFields((f) => {
             const next = [...f, { key: '', value: '' }];
-            // подождём рендер и проскроллим к новому полю
             setTimeout(() => {
                 lastFieldRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
             }, 0);
@@ -172,14 +279,18 @@ function AssignTaskModal({ techCardId, onClose, onSaved }) {
         });
     };
 
-    const removeField = (idx) => setFields((f) => f.filter((_, i) => i !== idx));
+    const removeField = (idx) => {
+        setFields((f) => f.filter((_, i) => i !== idx));
+    };
 
     const handleSave = async () => {
         if (!card) return;
         setError('');
         setOk('');
 
-        const anyAssigned = assignments.some((a) => (a.leadUserIds.length + a.memberUserIds.length) > 0);
+        const anyAssigned = safeAssignments.some(
+            (a) => (a.leadUserIds.length + a.memberUserIds.length) > 0
+        );
         if (!anyAssigned) {
             setError('Назначьте хотя бы одного сотрудника хотя бы на один шаг');
             return;
@@ -191,28 +302,33 @@ function AssignTaskModal({ techCardId, onClose, onSaved }) {
                 techCardId: card.id,
                 name: taskName.trim() || undefined,
                 fields: fields.filter((f) => f.key && f.value),
-                assignments,
-                // Если у вас нет puppeteer на бэке и не нужны мгновенные PDF — отключите предгенерацию
+                assignments: safeAssignments,
                 preGeneratePdfs: false,
             };
+            const token = localStorage.getItem('token');
+            const headers = { 'Content-Type': 'application/json' };
+            if (token) headers['Authorization'] = `Bearer ${token}`;
+
             const res = await fetch(`${API}/tasks`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers,
+                credentials: USE_CREDENTIALS ? 'include' : 'same-origin',
                 body: JSON.stringify(payload),
             });
-            if (!res.ok) throw new Error(await res.text());
-            const data = await res.json();
-
-            // Автоматически открыть страницу печати всех документов задания
+            if (!res.ok) {
+                let txt = '';
+                try { txt = await res.text(); } catch { }
+                throw new Error(txt || `Ошибка сохранения (${res.status})`);
+            }
+            const data = await safeJson(res);
             if (data?.printAllUrl) {
                 window.open(`${API}${data.printAllUrl}`, '_blank', 'noopener');
             }
             setOk('Задание успешно сохранено');
-            // Закрыть модалку чуть позже
-            setTimeout(() => onSaved?.(), 600);
+            setTimeout(() => onSaved?.(), 650);
         } catch (e) {
-            console.error(e);
-            setError(e?.message || 'Ошибка сохранения задания');
+            console.error('[AssignTaskModal] save error', e);
+            setError(e.message || 'Ошибка сохранения задания');
         } finally {
             setSaving(false);
         }
@@ -221,10 +337,34 @@ function AssignTaskModal({ techCardId, onClose, onSaved }) {
     if (loading) {
         return (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-                <div className="rounded-2xl bg-white dark:bg-neutral-900 p-6 shadow-xl">Загрузка…</div>
+                <div className="rounded-2xl bg-white dark:bg-neutral-900 p-6 shadow-xl">
+                    Загрузка…
+                </div>
             </div>
         );
     }
+
+    if (!card) {
+        return (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45">
+                <div className="bg-white dark:bg-neutral-900 rounded-2xl shadow-2xl p-6 max-w-md w-full space-y-4">
+                    <div className="text-red-600 dark:text-red-400 text-sm">
+                        {error || 'Не удалось загрузить техкарту'}
+                    </div>
+                    <div className="flex justify-end">
+                        <button
+                            onClick={onClose}
+                            className="px-4 py-2 rounded-lg bg-black text-white dark:bg-white dark:text-black text-sm"
+                        >
+                            Закрыть
+                        </button>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    const steps = Array.isArray(card.steps) ? card.steps : [];
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45">
@@ -235,45 +375,70 @@ function AssignTaskModal({ techCardId, onClose, onSaved }) {
                         <div>
                             <h2 className="text-xl font-semibold">Выдача задания: {card.name}</h2>
                             <p className="text-sm text-neutral-500">
-                                Шагов: {card.steps?.length ?? 0}
+                                Шагов: {steps.length}
                                 {card.item ? ` • Изделие: ${card.item.name}` : ''}
                             </p>
                         </div>
-                        <button onClick={onClose} className="text-2xl leading-none hover:opacity-70">✕</button>
+                        <button
+                            onClick={() => !saving && onClose()}
+                            className="text-2xl leading-none hover:opacity-70"
+                            title="Закрыть"
+                        >
+                            ✕
+                        </button>
                     </div>
                 </div>
 
                 {/* Body */}
                 <div className="px-6 py-4 overflow-y-auto space-y-6">
-                    {/* Task name */}
                     <label className="block">
                         <span className="text-sm text-neutral-500">Название задания</span>
                         <input
                             value={taskName}
                             onChange={(e) => setTaskName(e.target.value)}
-                            className="mt-1 w-full px-4 py-2.5 rounded-xl border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800"
+                            disabled={saving}
+                            className="mt-1 w-full px-4 py-2.5 rounded-xl border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 outline-none focus:ring-2 focus:ring-black dark:focus:ring-white"
                         />
                     </label>
 
-                    {/* Users search */}
-                    <div className="flex items-center gap-3">
-                        <input
-                            value={searchUser}
-                            onChange={(e) => setSearchUser(e.target.value)}
-                            placeholder="Поиск сотрудника…"
-                            className="px-4 py-2.5 rounded-xl border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 w-full max-w-lg"
-                        />
-                        <span className="text-xs text-neutral-500">Всего сотрудников: {users.length}</span>
+                    {/* Users search + статус загрузки / ошибки */}
+                    <div className="flex flex-col gap-2">
+                        <div className="flex items-center gap-3">
+                            <input
+                                value={searchUser}
+                                onChange={(e) => setSearchUser(e.target.value)}
+                                placeholder="Поиск сотрудника…"
+                                disabled={saving || loadingUsers}
+                                className="px-4 py-2.5 rounded-xl border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 w-full max-w-lg outline-none focus:ring-2 focus:ring-black dark:focus:ring-white"
+                            />
+                            <span className="text-xs text-neutral-500">
+                                {loadingUsers
+                                    ? 'Загрузка пользователей...'
+                                    : usersError
+                                        ? 'Пользователи: ошибка'
+                                        : `Всего: ${users.length}`}
+                            </span>
+                        </div>
+                        {usersError && (
+                            <div className="text-xs text-red-600 dark:text-red-400">
+                                {usersError}
+                            </div>
+                        )}
                     </div>
 
                     {/* Steps */}
                     <div className="space-y-5">
-                        {card.steps.map((s, i) => {
-                            const leadSelected = assignments[i].leadUserIds;
-                            const memberSelected = assignments[i].memberUserIds;
+                        {steps.map((s, i) => {
+                            const assign = safeAssignments[i] || { leadUserIds: [], memberUserIds: [] };
+                            const leadSelected = assign.leadUserIds;
+                            const memberSelected = assign.memberUserIds;
 
-                            const leadAvailableUsers = filteredUsers.filter((u) => !memberSelected.includes(u.id));
-                            const memberAvailableUsers = filteredUsers.filter((u) => !leadSelected.includes(u.id));
+                            // Если пользователей нет (ошибка 401), всё равно рендерим шаги — просто не даём выбирать
+                            const baseUsers = filteredUsers;
+                            const disableUserActions = !!usersError || loadingUsers;
+
+                            const leadAvailableUsers = baseUsers.filter((u) => !memberSelected.includes(u.id));
+                            const memberAvailableUsers = baseUsers.filter((u) => !leadSelected.includes(u.id));
 
                             const selectedLeadUsers = users.filter((u) => leadSelected.includes(u.id));
                             const selectedMemberUsers = users.filter((u) => memberSelected.includes(u.id));
@@ -300,110 +465,47 @@ function AssignTaskModal({ techCardId, onClose, onSaved }) {
                                         )}
                                     </div>
 
-                                    {/* Selected chips */}
                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                        {/* Leads */}
-                                        <div>
-                                            <div className="flex items-center justify-between">
-                                                <div className="text-sm font-semibold">Главные</div>
-                                                {selectedLeadUsers.length > 0 && (
-                                                    <span className="text-xs text-neutral-500">выбрано: {selectedLeadUsers.length}</span>
-                                                )}
-                                            </div>
-
-                                            {selectedLeadUsers.length > 0 ? (
-                                                <div className="mt-2 flex flex-wrap gap-2">
-                                                    {selectedLeadUsers.map((u) => (
-                                                        <UserChip
-                                                            key={`lead-chip-${s.id}-${u.id}`}
-                                                            user={u}
-                                                            onRemove={() => toggleUser(i, 'lead', u.id)}
-                                                            tone="lead"
-                                                            initials={initials(u)}
-                                                        >
-                                                            {formatUserName(u)}
-                                                        </UserChip>
-                                                    ))}
-                                                </div>
-                                            ) : (
-                                                <div className="mt-2 text-xs text-neutral-500">Никто не выбран</div>
-                                            )}
-
-                                            {/* Available list */}
-                                            <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
-                                                {leadAvailableUsers.map((u) => {
-                                                    const checked = leadSelected.includes(u.id);
-                                                    return (
-                                                        <UserSelectButton
-                                                            key={`lead-${s.id}-${u.id}`}
-                                                            user={u}
-                                                            checked={checked}
-                                                            onClick={() => toggleUser(i, 'lead', u.id)}
-                                                            initials={initials(u)}
-                                                        >
-                                                            {formatUserName(u)} <span className="opacity-60 text-xs">({u.role})</span>
-                                                        </UserSelectButton>
-                                                    );
-                                                })}
-                                            </div>
-                                        </div>
-
-                                        {/* Members */}
-                                        <div>
-                                            <div className="flex items-center justify-between">
-                                                <div className="text-sm font-semibold">Остальные</div>
-                                                {selectedMemberUsers.length > 0 && (
-                                                    <span className="text-xs text-neutral-500">выбрано: {selectedMemberUsers.length}</span>
-                                                )}
-                                            </div>
-
-                                            {selectedMemberUsers.length > 0 ? (
-                                                <div className="mt-2 flex flex-wrap gap-2">
-                                                    {selectedMemberUsers.map((u) => (
-                                                        <UserChip
-                                                            key={`member-chip-${s.id}-${u.id}`}
-                                                            user={u}
-                                                            onRemove={() => toggleUser(i, 'member', u.id)}
-                                                            tone="member"
-                                                            initials={initials(u)}
-                                                        >
-                                                            {formatUserName(u)}
-                                                        </UserChip>
-                                                    ))}
-                                                </div>
-                                            ) : (
-                                                <div className="mt-2 text-xs text-neutral-500">Никто не выбран</div>
-                                            )}
-
-                                            {/* Available list */}
-                                            <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
-                                                {memberAvailableUsers.map((u) => {
-                                                    const checked = memberSelected.includes(u.id);
-                                                    return (
-                                                        <UserSelectButton
-                                                            key={`member-${s.id}-${u.id}`}
-                                                            user={u}
-                                                            checked={checked}
-                                                            onClick={() => toggleUser(i, 'member', u.id)}
-                                                            initials={initials(u)}
-                                                        >
-                                                            {formatUserName(u)} <span className="opacity-60 text-xs">({u.role})</span>
-                                                        </UserSelectButton>
-                                                    );
-                                                })}
-                                            </div>
-                                        </div>
+                                        <UserRoleColumn
+                                            title="Главные"
+                                            usersSelected={selectedLeadUsers}
+                                            available={leadAvailableUsers}
+                                            checkedIds={leadSelected}
+                                            onToggle={(uid) => !disableUserActions && toggleUser(i, 'lead', uid)}
+                                            formatUserName={formatUserName}
+                                            initials={initials}
+                                            roleLabel="lead"
+                                            disabled={saving || disableUserActions}
+                                        />
+                                        <UserRoleColumn
+                                            title="Остальные"
+                                            usersSelected={selectedMemberUsers}
+                                            available={memberAvailableUsers}
+                                            checkedIds={memberSelected}
+                                            onToggle={(uid) => !disableUserActions && toggleUser(i, 'member', uid)}
+                                            formatUserName={formatUserName}
+                                            initials={initials}
+                                            roleLabel="member"
+                                            disabled={saving || disableUserActions}
+                                        />
                                     </div>
 
-                                    {/* Materials inline */}
                                     {s.materials?.length ? (
                                         <div className="mt-4 text-xs text-neutral-500">
-                                            Материалы:{" "}
+                                            Материалы:{' '}
                                             {s.materials
-                                                .map(
-                                                    (m) =>
-                                                        `${m.material.name} — ${m.quantity}${m.unit?.unit ? ' ' + m.unit.unit : ''}`,
-                                                )
+                                                .map((m) => {
+                                                    const nm =
+                                                        m.material?.name ||
+                                                        m.Item?.name ||
+                                                        m.nomenclature?.name ||
+                                                        m.materialName ||
+                                                        '—';
+                                                    if (m.quantity != null) {
+                                                        return `${nm} (${m.quantity}${m.unit?.unit ? ' ' + m.unit.unit : ''})`;
+                                                    }
+                                                    return nm;
+                                                })
                                                 .join(', ')}
                                         </div>
                                     ) : null}
@@ -414,7 +516,9 @@ function AssignTaskModal({ techCardId, onClose, onSaved }) {
 
                     {/* Custom fields */}
                     <div>
-                        <div className="mb-2 text-sm text-neutral-500">Произвольные поля задания</div>
+                        <div className="mb-2 text-sm text-neutral-500">
+                            Произвольные поля задания
+                        </div>
                         <div className="space-y-2">
                             {fields.map((f, i) => {
                                 const isLast = i === fields.length - 1;
@@ -427,18 +531,21 @@ function AssignTaskModal({ techCardId, onClose, onSaved }) {
                                         <input
                                             placeholder="Ключ"
                                             value={f.key}
+                                            disabled={saving}
                                             onChange={(e) => setField(i, 'key', e.target.value)}
-                                            className="flex-1 px-3 py-2.5 rounded-xl border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800"
+                                            className="flex-1 px-3 py-2.5 rounded-xl border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 outline-none focus:ring-2 focus:ring-black dark:focus:ring-white"
                                         />
                                         <input
                                             placeholder="Значение"
                                             value={f.value}
+                                            disabled={saving}
                                             onChange={(e) => setField(i, 'value', e.target.value)}
-                                            className="flex-1 px-3 py-2.5 rounded-xl border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800"
+                                            className="flex-1 px-3 py-2.5 rounded-xl border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 outline-none focus:ring-2 focus:ring-black dark:focus:ring-white"
                                         />
                                         <button
                                             onClick={() => removeField(i)}
-                                            className="px-3 py-2 rounded-xl border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-50 dark:hover:bg-neutral-800"
+                                            disabled={saving}
+                                            className="px-3 py-2 rounded-xl border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-50 dark:hover:bg-neutral-800 disabled:opacity-50"
                                             title="Удалить"
                                         >
                                             ✕
@@ -447,7 +554,11 @@ function AssignTaskModal({ techCardId, onClose, onSaved }) {
                                 );
                             })}
                         </div>
-                        <button onClick={addField} className="mt-3 text-sm text-blue-600 hover:underline">
+                        <button
+                            onClick={addField}
+                            disabled={saving}
+                            className="mt-3 text-sm text-blue-600 hover:underline disabled:opacity-50"
+                        >
                             + Добавить поле
                         </button>
                     </div>
@@ -464,17 +575,18 @@ function AssignTaskModal({ techCardId, onClose, onSaved }) {
                     )}
                 </div>
 
-                {/* Footer actions (sticky) */}
+                {/* Footer */}
                 <div className="px-6 py-4 border-t border-neutral-200 dark:border-neutral-800 flex items-center justify-end gap-3">
                     <button
-                        onClick={onClose}
-                        className="px-4 py-2.5 rounded-xl border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-50 dark:hover:bg-neutral-800"
+                        onClick={() => !saving && onClose()}
+                        className="px-4 py-2.5 rounded-xl border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-50 dark:hover:bg-neutral-800 disabled:opacity-50"
+                        disabled={saving}
                     >
                         Отмена
                     </button>
                     <button
                         onClick={handleSave}
-                        disabled={saving}
+                        disabled={saving || !!usersError} // если нет пользователей из-за 401 — блокируем сохранение
                         className="px-5 py-2.5 rounded-xl bg-black text-white dark:bg-white dark:text-black disabled:opacity-60"
                     >
                         {saving ? 'Сохранение…' : 'Сохранить'}
@@ -485,9 +597,74 @@ function AssignTaskModal({ techCardId, onClose, onSaved }) {
     );
 }
 
-/* ---------- UI Subcomponents ---------- */
+/* ---------- Подкомпоненты ---------- */
 
-function UserChip({ user, onRemove, tone = 'lead', children, initials }) {
+function UserRoleColumn({
+    title,
+    usersSelected,
+    available,
+    checkedIds,
+    onToggle,
+    formatUserName,
+    initials,
+    roleLabel,
+    disabled,
+}) {
+    const sel = Array.isArray(usersSelected) ? usersSelected : [];
+    const avail = Array.isArray(available) ? available : [];
+    const checked = Array.isArray(checkedIds) ? checkedIds : [];
+
+    return (
+        <div>
+            <div className="flex items-center justify-between">
+                <div className="text-sm font-semibold">{title}</div>
+                {sel.length > 0 && (
+                    <span className="text-xs text-neutral-500">выбрано: {sel.length}</span>
+                )}
+            </div>
+
+            {sel.length > 0 ? (
+                <div className="mt-2 flex flex-wrap gap-2">
+                    {sel.map((u) => (
+                        <UserChip
+                            key={`${roleLabel}-chip-${u.id}`}
+                            user={u}
+                            onRemove={() => onToggle(u.id)}
+                            tone={roleLabel === 'lead' ? 'lead' : 'member'}
+                            initials={initials(u)}
+                            disabled={disabled}
+                        >
+                            {formatUserName(u)}
+                        </UserChip>
+                    ))}
+                </div>
+            ) : (
+                <div className="mt-2 text-xs text-neutral-500">Никто не выбран</div>
+            )}
+
+            <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {avail.map((u) => {
+                    const isChecked = checked.includes(u.id);
+                    return (
+                        <UserSelectButton
+                            key={`${roleLabel}-${u.id}`}
+                            user={u}
+                            checked={isChecked}
+                            onClick={() => onToggle(u.id)}
+                            initials={initials(u)}
+                            disabled={disabled}
+                        >
+                            {formatUserName(u)}{' '}
+                            <span className="opacity-60 text-xs">({u.role})</span>
+                        </UserSelectButton>
+                    );
+                })}
+            </div>
+        </div>
+    );
+}
+
+function UserChip({ user, onRemove, tone = 'lead', children, initials, disabled }) {
     const toneStyles =
         tone === 'lead'
             ? 'bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 border-blue-200 dark:border-blue-800'
@@ -495,16 +672,16 @@ function UserChip({ user, onRemove, tone = 'lead', children, initials }) {
 
     return (
         <span
-            className={`inline-flex items-center gap-2 px-2.5 py-1.5 rounded-full text-sm border ${toneStyles}`}
+            className={`inline-flex items-center gap-2 px-2.5 py-1.5 rounded-full text-xs border ${toneStyles}`}
             title={user.email}
         >
             <Avatar initials={initials} />
             {children}
             <button
-                onClick={onRemove}
+                onClick={() => !disabled && onRemove()}
                 className="ml-1 text-xs opacity-70 hover:opacity-100"
                 aria-label="Удалить"
-                title="Удалить"
+                disabled={disabled}
             >
                 ✕
             </button>
@@ -512,18 +689,23 @@ function UserChip({ user, onRemove, tone = 'lead', children, initials }) {
     );
 }
 
-function UserSelectButton({ user, checked, onClick, children, initials }) {
+function UserSelectButton({ user, checked, onClick, children, initials, disabled }) {
     return (
         <button
             type="button"
-            onClick={onClick}
-            className={`flex items-center gap-3 p-3 rounded-xl border transition text-left ${checked
-                ? 'bg-black text-white border-black dark:bg-white dark:text-black'
-                : 'bg-neutral-50 dark:bg-neutral-800 text-neutral-900 dark:text-white border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-700'
-                }`}
+            onClick={() => !disabled && onClick()}
+            disabled={disabled}
+            className={`flex items-center gap-3 p-3 rounded-xl border transition text-left text-xs ${checked
+                    ? 'bg-black text-white border-black dark:bg-white dark:text-black'
+                    : 'bg-neutral-50 dark:bg-neutral-800 text-neutral-900 dark:text-white border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-700'
+                } disabled:opacity-50`}
         >
-            <span className={`w-5 h-5 rounded-md border-2 flex items-center justify-center text-xs ${checked ? 'border-white bg-white text-black dark:border-black dark:bg-black dark:text-white' : 'border-neutral-400 text-transparent'
-                }`}>
+            <span
+                className={`w-5 h-5 rounded-md border-2 flex items-center justify-center text-[10px] ${checked
+                        ? 'border-white bg-white text-black dark:border-black dark:bg-black dark:text-white'
+                        : 'border-neutral-400 text-transparent'
+                    }`}
+            >
                 ✓
             </span>
             <Avatar initials={initials} />

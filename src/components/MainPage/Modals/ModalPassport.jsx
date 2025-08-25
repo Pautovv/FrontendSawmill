@@ -1,4 +1,5 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
+import AutocompleteNomenclature from './help/Autocomplited';
 
 const API_BASE = 'http://localhost:3001';
 
@@ -8,100 +9,113 @@ function randomId() {
 }
 
 export default function ModalPassport({ onClose, onCreated }) {
+  // Название техкарты (свободное)
   const [name, setName] = useState('');
+  // Массив шагов
   const [steps, setSteps] = useState([]);
-  const [specMaterials, setSpecMaterials] = useState([]); // справочник материалов (MaterialSpec)
+  // Единицы (нам сейчас не нужны для материалов, но оставим загрузку на будущее / совместимость)
   const [units, setUnits] = useState([]);
-  const [machines, setMachines] = useState([]); // станки (items по категории "станки")
+  // Изображения (опционально)
+  const [images, setImages] = useState([]);
+  // Состояния
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState('');
 
+  // Загрузка единиц измерения (если не нужны — можно закомментировать)
   useEffect(() => {
     let ignore = false;
-    setErr('');
-    setName('');
-    setSteps([]);
     (async () => {
       try {
-        const [specsRes, unitsRes, machinesRes] = await Promise.all([
-          fetch(`${API_BASE}/spec-materials`),
-          fetch(`${API_BASE}/units/available`),
-          fetch(`${API_BASE}/items/by-category?categoryPath=${encodeURIComponent('станки')}`),
-        ]);
-        if (!specsRes.ok || !unitsRes.ok || !machinesRes.ok) throw new Error('Не удалось загрузить справочники');
-        const [specs, unitList, machinesList] = await Promise.all([
-          specsRes.json(),
-          unitsRes.json(),
-          machinesRes.json(),
-        ]);
-        if (!ignore) {
-          setSpecMaterials(specs); // [{id, name, category?}]
-          setUnits(unitList);
-          setMachines(machinesList);
-        }
+        const res = await fetch(`${API_BASE}/units/available`);
+        if (!res.ok) throw new Error('Не удалось загрузить единицы');
+        const data = await res.json();
+        if (!ignore) setUnits(data);
       } catch (e) {
-        if (!ignore) setErr(e?.message || 'Ошибка загрузки данных');
+        if (!ignore) setErr(e.message || 'Ошибка загрузки единиц');
       }
     })();
     return () => { ignore = true; };
   }, []);
 
-  const addStep = () => {
-    setSteps((prev) => [
+  /* ---------- Шаги ---------- */
+
+  const addStep = useCallback(() => {
+    setSteps(prev => [
       ...prev,
       {
         tempId: randomId(),
         name: '',
-        machineItemId: '',
-        materials: [],
-        fields: [],
+        machineNomenclature: null,
+        machineItemId: '', // если вдруг нужна старая связь (пока оставим)
+        materials: [],     // [{ tempId, materialNomenclature }]
+        fields: [],        // [{ key, value, _id }]
       },
     ]);
-  };
+  }, []);
 
   const updateStep = (tempId, patch) => {
-    setSteps((prev) => prev.map((s) => (s.tempId === tempId ? { ...s, ...patch } : s)));
+    setSteps(prev => prev.map(s => (s.tempId === tempId ? { ...s, ...patch } : s)));
   };
 
   const removeStep = (tempId) => {
-    setSteps((prev) => prev.filter((s) => s.tempId !== tempId));
+    setSteps(prev => prev.filter(s => s.tempId !== tempId));
   };
 
   const moveStep = (tempId, dir) => {
-    setSteps((prev) => {
-      const idx = prev.findIndex((s) => s.tempId === tempId);
+    setSteps(prev => {
+      const idx = prev.findIndex(s => s.tempId === tempId);
       if (idx < 0) return prev;
-      const newIdx = idx + dir;
-      if (newIdx < 0 || newIdx >= prev.length) return prev;
+      const ni = idx + dir;
+      if (ni < 0 || ni >= prev.length) return prev;
       const copy = [...prev];
       const [moved] = copy.splice(idx, 1);
-      copy.splice(newIdx, 0, moved);
+      copy.splice(ni, 0, moved);
       return copy;
     });
   };
+
+  /* ---------- Изображения ---------- */
+
+  const addImages = (fileList) => {
+    const arr = Array.from(fileList).map(f => ({
+      file: f,
+      tempId: randomId(),
+      preview: URL.createObjectURL(f),
+    }));
+    setImages(prev => [...prev, ...arr]);
+  };
+
+  const removeImage = (tempId) => {
+    setImages(prev => prev.filter(i => i.tempId !== tempId));
+  };
+
+  /* ---------- Submit ---------- */
 
   const handleSubmit = async () => {
     setLoading(true);
     setErr('');
     try {
-      if (!name.trim()) throw new Error('Укажите название паспорта');
-      if (steps.length === 0) throw new Error('Добавьте хотя бы один шаг');
-      for (let i = 0; i < steps.length; i++) {
-        if (!steps[i].name?.trim()) throw new Error(`Укажите название для шага ${i + 1}`);
-      }
+      if (!name.trim()) throw new Error('Введите название техкарты');
+      if (!steps.length) throw new Error('Добавьте хотя бы один шаг');
+
+      steps.forEach((s, ix) => {
+        if (!s.name?.trim()) {
+          throw new Error(`Название шага №${ix + 1} обязательно`);
+        }
+      });
 
       const payload = {
         name: name.trim(),
         steps: steps.map((s, idx) => ({
           order: idx + 1,
           name: s.name.trim(),
+          machineNomenclatureId: s.machineNomenclature?.id || undefined,
           machineItemId: s.machineItemId ? Number(s.machineItemId) : undefined,
-          materials: (s.materials || []).map((m) => ({
-            materialSpecId: Number(m.materialSpecId),
-            quantity: Number(m.quantity ?? 1),
-            unitId: m.unitId ? Number(m.unitId) : undefined,
+          // Только номенклатуры материалов (без количества / единиц)
+          materials: (s.materials || []).map(m => ({
+            nomenclatureId: m.materialNomenclature?.id,
           })),
-          fields: (s.fields || []).filter((f) => f.key && f.value),
+          fields: (s.fields || []).filter(f => f.key && f.value),
         })),
       };
 
@@ -110,73 +124,124 @@ export default function ModalPassport({ onClose, onCreated }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
-      if (!r.ok) throw new Error((await r.text()) || 'Не удалось создать паспорт');
-      const data = await r.json();
+      if (!r.ok) throw new Error((await r.text()) || 'Не удалось создать техкарту');
+      const created = await r.json();
 
-      onCreated?.(data);
-      onClose?.();
+      if (images.length) {
+        const fd = new FormData();
+        images.forEach(img => fd.append('images', img.file));
+        // игнорируем ошибку загрузки изображений (не критично)
+        await fetch(`${API_BASE}/tech-cards/${created.id}/images`, { method: 'POST', body: fd })
+          .catch(() => console.warn('Ошибка загрузки изображений'));
+      }
+
+      onCreated && onCreated(created);
+      onClose && onClose();
     } catch (e) {
-      setErr(e?.message || 'Ошибка');
+      setErr(e.message || 'Ошибка');
     } finally {
       setLoading(false);
     }
   };
 
+  const disabledSubmit = loading || !name.trim() || steps.length === 0;
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div className="absolute inset-0 bg-black/50" onClick={onClose} />
+      {/* Backdrop */}
+      <div className="absolute inset-0 bg-black/50" onClick={() => !loading && onClose?.()} />
+
       <div
         className="relative w-[min(1000px,95vw)] max-h-[90vh] overflow-auto rounded-2xl bg-white dark:bg-neutral-900 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
+        {/* Header */}
         <div className="sticky top-0 z-10 flex items-center justify-between border-b border-neutral-200 dark:border-neutral-800 px-5 py-4 bg-white/90 dark:bg-neutral-900/90 backdrop-blur">
-          <h3 className="text-lg font-semibold">Создание паспорта</h3>
-          <button onClick={onClose} className="rounded-md px-2 py-1 text-sm hover:bg-neutral-100 dark:hover:bg-neutral-800" aria-label="Закрыть">✕</button>
+          <h3 className="text-lg font-semibold">Создание техкарты</h3>
+          <button
+            onClick={() => !loading && onClose?.()}
+            className="rounded-md px-2 py-1 text-sm hover:bg-neutral-100 dark:hover:bg-neutral-800"
+            aria-label="Закрыть"
+          >
+            ✕
+          </button>
         </div>
 
-        <div className="px-5 py-4">
-          {err ? (
-            <div className="mb-3 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-700 dark:bg-red-900/30 dark:text-red-200">
+        {/* Body */}
+        <div className="px-5 py-5 space-y-6">
+          {err && (
+            <div className="rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-600 dark:bg-red-900/30 dark:text-red-200">
               {err}
             </div>
-          ) : null}
+          )}
 
-          <label className="mb-3 flex flex-col gap-1">
-            <span className="text-sm text-neutral-600 dark:text-neutral-300">Название</span>
+          {/* Название техкарты */}
+          <label className="flex flex-col gap-1">
+            <span className="text-sm text-neutral-600 dark:text-neutral-300">
+              Название техкарты
+            </span>
             <input
-              className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 px-3 py-2 outline-none focus:ring-2 focus:ring-black dark:focus:ring-white"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="Например: Техкарта — Шаблон №1"
+              placeholder="Например: Карта — Сборка рам"
+              className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-black dark:focus:ring-white"
+              disabled={loading}
             />
           </label>
 
-          <div className="space-y-3">
-            {steps.map((step, idx) => (
+          {/* Изображения */}
+          <ImageSection
+            images={images}
+            addImages={addImages}
+            removeImage={removeImage}
+            disabled={loading}
+          />
+
+          {/* Шаги */}
+          <div className="space-y-4">
+            {steps.map((s, idx) => (
               <StepEditor
-                key={step.tempId}
+                key={s.tempId}
                 index={idx + 1}
-                step={step}
-                specMaterials={specMaterials}
-                units={units}
-                machines={machines}
-                onChange={(patch) => updateStep(step.tempId, patch)}
-                onRemove={() => removeStep(step.tempId)}
-                onMoveUp={() => moveStep(step.tempId, -1)}
-                onMoveDown={() => moveStep(step.tempId, +1)}
+                step={s}
+                onChange={(patch) => updateStep(s.tempId, patch)}
+                onRemove={() => removeStep(s.tempId)}
+                onMoveUp={() => moveStep(s.tempId, -1)}
+                onMoveDown={() => moveStep(s.tempId, +1)}
+                disabled={loading}
               />
             ))}
+
+            {steps.length === 0 && (
+              <div className="text-xs text-neutral-500">
+                Пока нет шагов — нажмите "Добавить шаг"
+              </div>
+            )}
           </div>
         </div>
 
+        {/* Footer */}
         <div className="sticky bottom-0 z-10 flex items-center justify-between gap-2 border-t border-neutral-200 dark:border-neutral-800 px-5 py-3 bg-white/90 dark:bg-neutral-900/90 backdrop-blur">
-          <button onClick={addStep} className="rounded-lg bg-neutral-100 dark:bg-neutral-800 px-3 py-2 text-sm hover:bg-neutral-200 dark:hover:bg-neutral-700" disabled={loading}>
+          <button
+            onClick={addStep}
+            disabled={loading}
+            className="rounded-lg bg-neutral-100 dark:bg-neutral-800 px-3 py-2 text-sm hover:bg-neutral-200 dark:hover:bg-neutral-700 disabled:opacity-50"
+          >
             + Добавить шаг
           </button>
-
           <div className="flex items-center gap-2">
-            <button onClick={onClose} className="rounded-lg px-4 py-2 text-sm hover:bg-neutral-100 dark:hover:bg-neutral-800" disabled={loading}>Отмена</button>
-            <button onClick={handleSubmit} className="rounded-lg bg-black text-white dark:bg-white dark:text-black px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50" disabled={loading || !name.trim() || steps.length === 0}>
+            <button
+              onClick={() => !loading && onClose?.()}
+              disabled={loading}
+              className="rounded-lg px-4 py-2 text-sm hover:bg-neutral-100 dark:hover:bg-neutral-800 disabled:opacity-50"
+            >
+              Отмена
+            </button>
+            <button
+              onClick={handleSubmit}
+              disabled={disabledSubmit}
+              className="rounded-lg bg-black text-white dark:bg-white dark:text-black px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50"
+            >
               {loading ? 'Сохранение…' : 'Создать'}
             </button>
           </div>
@@ -186,193 +251,204 @@ export default function ModalPassport({ onClose, onCreated }) {
   );
 }
 
+/* ---------- Компонент шагов ---------- */
+
 function StepEditor({
   index,
   step,
-  specMaterials,
-  units,
-  machines,
   onChange,
   onRemove,
   onMoveUp,
   onMoveDown,
+  disabled,
 }) {
   const addMaterial = () => {
-    const defaultSpecId = specMaterials[0]?.id ?? '';
-    const defaultUnitId = units[0]?.id ?? '';
     onChange({
       materials: [
         ...(step.materials || []),
-        { materialSpecId: defaultSpecId, quantity: 1, unitId: defaultUnitId },
+        {
+          tempId: randomId(),
+          materialNomenclature: null,
+        },
       ],
     });
   };
 
-  const updateMaterial = (i, patch) => {
+  const updateMaterial = (tempId, patch) => {
     const copy = [...(step.materials || [])];
-    copy[i] = { ...copy[i], ...patch };
-    onChange({ materials: copy });
+    const i = copy.findIndex(m => m.tempId === tempId);
+    if (i >= 0) {
+      copy[i] = { ...copy[i], ...patch };
+      onChange({ materials: copy });
+    }
   };
 
-  const removeMaterial = (i) => {
+  const removeMaterial = (tempId) => {
     const copy = [...(step.materials || [])];
-    copy.splice(i, 1);
-    onChange({ materials: copy });
+    const i = copy.findIndex(m => m.tempId === tempId);
+    if (i >= 0) {
+      copy.splice(i, 1);
+      onChange({ materials: copy });
+    }
   };
 
-  const addField = () => onChange({ fields: [...(step.fields || []), { key: '', value: '' }] });
-  const updateField = (i, patch) => {
+  const addField = () =>
+    onChange({
+      fields: [...(step.fields || []), { key: '', value: '', _id: randomId() }],
+    });
+
+  const updateField = (idx, patch) => {
     const copy = [...(step.fields || [])];
-    copy[i] = { ...copy[i], ...patch };
+    copy[idx] = { ...copy[idx], ...patch };
     onChange({ fields: copy });
   };
-  const removeField = (i) => {
+
+  const removeField = (idx) => {
     const copy = [...(step.fields || [])];
-    copy.splice(i, 1);
+    copy.splice(idx, 1);
     onChange({ fields: copy });
   };
 
   return (
-    <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 p-4">
-      <div className="mb-3 flex items-center justify-between">
+    <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 p-4 space-y-5">
+      {/* Header действий шага */}
+      <div className="flex items-center justify-between">
         <strong className="text-sm">Шаг {index}</strong>
         <div className="flex items-center gap-2">
-          <button onClick={onMoveUp} title="Вверх" className="rounded-md px-2 py-1 text-sm hover:bg-neutral-100 dark:hover:bg-neutral-800">↑</button>
-          <button onClick={onMoveDown} title="Вниз" className="rounded-md px-2 py-1 text-sm hover:bg-neutral-100 dark:hover:bg-neutral-800">↓</button>
-          <button onClick={onRemove} title="Удалить" className="rounded-md px-2 py-1 text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30">✕</button>
+          <button
+            onClick={onMoveUp}
+            disabled={disabled}
+            title="Вверх"
+            className="rounded-md px-2 py-1 text-sm hover:bg-neutral-100 dark:hover:bg-neutral-800 disabled:opacity-40"
+          >
+            ↑
+          </button>
+          <button
+            onClick={onMoveDown}
+            disabled={disabled}
+            title="Вниз"
+            className="rounded-md px-2 py-1 text-sm hover:bg-neutral-100 dark:hover:bg-neutral-800 disabled:opacity-40"
+          >
+            ↓
+          </button>
+          <button
+            onClick={onRemove}
+            disabled={disabled}
+            title="Удалить"
+            className="rounded-md px-2 py-1 text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30 disabled:opacity-40"
+          >
+            ✕
+          </button>
         </div>
       </div>
 
-      <label className="mb-3 flex flex-col gap-1">
-        <span className="text-sm text-neutral-600 dark:text-neutral-300">Название шага</span>
+      {/* Название шага */}
+      <label className="flex flex-col gap-1">
+        <span className="text-sm text-neutral-600 dark:text-neutral-300">
+          Название шага
+        </span>
         <input
-          className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 px-3 py-2 outline-none focus:ring-2 focus:ring-black dark:focus:ring-white"
           value={step.name}
           onChange={(e) => onChange({ name: e.target.value })}
           placeholder="Например: Раскрой"
+          disabled={disabled}
+          className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-black dark:focus:ring-white"
         />
       </label>
 
-      <div className="mb-3 grid grid-cols-1 gap-3 md:grid-cols-2">
-        <label className="flex flex-col gap-1">
-          <span className="text-sm text-neutral-600 dark:text-neutral-300">Станок</span>
-          <select
-            className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 px-3 py-2 outline-none focus:ring-2 focus:ring-black dark:focus:ring-white"
-            value={step.machineItemId ?? ''}
-            onChange={(e) => {
-              const value = e.target.value ? Number(e.target.value) : '';
-              onChange({ machineItemId: value });
-            }}
-          >
-            <option value="">— Не выбран —</option>
-            {machines.map((m) => (
-              <option key={m.id} value={m.id}>{m.name}</option>
-            ))}
-          </select>
-        </label>
+      {/* Станок */}
+      <div className="flex flex-col gap-1">
+        <span className="text-sm text-neutral-600 dark:text-neutral-300">
+          Станок / оборудование
+        </span>
+        <AutocompleteNomenclature
+          type="MACHINE"
+          value={step.machineNomenclature}
+          onSelect={(v) => onChange({ machineNomenclature: v })}
+          placeholder="Начните вводить..."
+          disabled={disabled}
+        />
       </div>
 
-      <div className="mt-2">
-        <div className="mb-2 flex items-center justify-between">
-          <strong className="text-sm">Сырьё (материалы)</strong>
-          <button onClick={addMaterial} className="rounded-md bg-neutral-100 dark:bg-neutral-800 px-2 py-1 text-sm hover:bg-neutral-200 dark:hover:bg-neutral-700">
-            + Добавить материал
+      {/* Материалы */}
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <strong className="text-sm">Материалы</strong>
+          <button
+            onClick={addMaterial}
+            disabled={disabled}
+            className="rounded-md bg-neutral-100 dark:bg-neutral-800 px-2 py-1 text-sm hover:bg-neutral-200 dark:hover:bg-neutral-700 disabled:opacity-40"
+          >
+            + Материал
           </button>
         </div>
-
         {(!step.materials || step.materials.length === 0) && (
-          <div className="mb-2 text-xs text-neutral-500">Материалов пока нет</div>
+          <div className="text-xs text-neutral-500">
+            Материалов пока нет
+          </div>
         )}
-
-        <div className="space-y-2">
-          {(step.materials || []).map((m, i) => (
-            <div key={i} className="grid grid-cols-1 gap-2 md:grid-cols-4">
-              <label className="flex flex-col gap-1 md:col-span-2">
-                <span className="text-sm text-neutral-600 dark:text-neutral-300">Материал (спецификация)</span>
-                <select
-                  className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 px-3 py-2 outline-none focus:ring-2 focus:ring-black dark:focus:ring-white"
-                  value={m.materialSpecId}
-                  onChange={(e) => updateMaterial(i, { materialSpecId: Number(e.target.value) })}
-                >
-                  {specMaterials.map((sm) => (
-                    <option key={sm.id} value={sm.id}>
-                      {sm.name}{sm?.category ? ` — ${sm.category}` : ''}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label className="flex flex-col gap-1">
-                <span className="text-sm text-neutral-600 dark:text-neutral-300">Кол-во</span>
-                <input
-                  type="number"
-                  min={0}
-                  step="any"
-                  className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 px-3 py-2 outline-none focus:ring-2 focus:ring-black dark:focus:ring-white"
-                  value={m.quantity ?? 1}
-                  onChange={(e) => updateMaterial(i, { quantity: e.target.value })}
+        <div className="space-y-3">
+          {(step.materials || []).map(m => (
+            <div key={m.tempId} className="flex items-center gap-2">
+              <div className="flex-1">
+                <AutocompleteNomenclature
+                  type="MATERIAL"
+                  value={m.materialNomenclature}
+                  onSelect={(v) => updateMaterial(m.tempId, { materialNomenclature: v })}
+                  placeholder="Материал..."
+                  disabled={disabled}
                 />
-              </label>
-
-              <label className="flex flex-col gap-1">
-                <span className="text-sm text-neutral-600 dark:text-neutral-300">Ед. изм.</span>
-                <select
-                  className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 px-3 py-2 outline-none focus:ring-2 focus:ring-black dark:focus:ring-white"
-                  value={m.unitId ?? ''}
-                  onChange={(e) => updateMaterial(i, { unitId: e.target.value ? Number(e.target.value) : '' })}
-                >
-                  <option value="">—</option>
-                  {units.map((u) => (
-                    <option key={u.id} value={u.id}>{u.unit}</option>
-                  ))}
-                </select>
-              </label>
-
-              <div className="flex items-end">
-                <button onClick={() => removeMaterial(i)} className="h-[38px] rounded-md px-3 py-2 text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30">
-                  Удалить
-                </button>
               </div>
+              <button
+                onClick={() => removeMaterial(m.tempId)}
+                disabled={disabled}
+                className="rounded-md px-3 py-2 text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30 disabled:opacity-40"
+              >
+                Удалить
+              </button>
             </div>
           ))}
         </div>
       </div>
 
-      <div className="mt-4">
-        <div className="mb-2 flex items-center justify-between">
+      {/* Доп. поля */}
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
           <strong className="text-sm">Доп. поля</strong>
-          <button onClick={addField} className="rounded-md bg-neutral-100 dark:bg-neutral-800 px-2 py-1 text-sm hover:bg-neutral-200 dark:hover:bg-neutral-700">
-            + Добавить поле
+          <button
+            onClick={addField}
+            disabled={disabled}
+            className="rounded-md bg-neutral-100 dark:bg-neutral-800 px-2 py-1 text-sm hover:bg-neutral-200 dark:hover:bg-neutral-700 disabled:opacity-40"
+          >
+            + Поле
           </button>
         </div>
-
         {(!step.fields || step.fields.length === 0) && (
-          <div className="mb-2 text-xs text-neutral-500">Полей пока нет</div>
+          <div className="text-xs text-neutral-500">Полей пока нет</div>
         )}
-
         <div className="space-y-2">
           {(step.fields || []).map((f, i) => (
-            <div key={i} className="grid grid-cols-1 gap-2 md:grid-cols-3">
-              <label className="flex flex-col gap-1">
-                <span className="text-sm text-neutral-600 dark:text-neutral-300">Ключ</span>
-                <input
-                  className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 px-3 py-2 outline-none focus:ring-2 focus:ring-black dark:focus:ring-white"
-                  value={f.key}
-                  onChange={(e) => updateField(i, { key: e.target.value })}
-                  placeholder="Напр.: Скорость подачи"
-                />
-              </label>
-              <label className="md:col-span-2 flex flex-col gap-1">
-                <span className="text-sm text-neutral-600 dark:text-neutral-300">Значение</span>
-                <input
-                  className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 px-3 py-2 outline-none focus:ring-2 focus:ring-black dark:focus:ring-white"
-                  value={f.value}
-                  onChange={(e) => updateField(i, { value: e.target.value })}
-                  placeholder="Напр.: 15 м/мин"
-                />
-              </label>
-              <div className="flex items-end">
-                <button onClick={() => removeField(i)} className="h-[38px] rounded-md px-3 py-2 text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30">
+            <div key={f._id || i} className="grid grid-cols-1 md:grid-cols-3 gap-2">
+              <input
+                value={f.key}
+                onChange={(e) => updateField(i, { key: e.target.value })}
+                disabled={disabled}
+                placeholder="Ключ (например: Скорость)"
+                className="rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-black dark:focus:ring-white"
+              />
+              <input
+                value={f.value}
+                onChange={(e) => updateField(i, { value: e.target.value })}
+                disabled={disabled}
+                placeholder="Значение (15 м/мин)"
+                className="md:col-span-2 rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-black dark:focus:ring-white"
+              />
+              <div className="md:col-span-3 flex justify-end">
+                <button
+                  onClick={() => removeField(i)}
+                  disabled={disabled}
+                  className="rounded-md px-3 py-1 text-xs text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30 disabled:opacity-40"
+                >
                   Удалить
                 </button>
               </div>
@@ -380,6 +456,60 @@ function StepEditor({
           ))}
         </div>
       </div>
+
+    </div>
+  );
+}
+
+/* ---------- Секция изображений (отдельный компонент для читаемости) ---------- */
+function ImageSection({ images, addImages, removeImage, disabled }) {
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between">
+        <span className="text-sm font-medium">Изображения</span>
+        <label className="cursor-pointer text-xs px-3 py-1 rounded-md bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700">
+          + Добавить
+          <input
+            type="file"
+            accept="image/*"
+            multiple
+            className="hidden"
+            disabled={disabled}
+            onChange={(e) => {
+              if (e.target.files?.length) addImages(e.target.files);
+              e.target.value = '';
+            }}
+          />
+        </label>
+      </div>
+      {images.length === 0 && (
+        <div className="text-xs text-neutral-500">Пока нет изображений</div>
+      )}
+      {images.length > 0 && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          {images.map((img, idx) => (
+            <div key={img.tempId} className="relative group border rounded-lg overflow-hidden">
+              <img
+                src={img.preview}
+                alt=""
+                className="object-cover w-full h-32"
+              />
+              <div className="absolute inset-0 hidden group-hover:flex justify-end items-start p-1">
+                <button
+                  onClick={() => removeImage(img.tempId)}
+                  disabled={disabled}
+                  className="bg-red-600 text-white text-xs px-2 py-1 rounded shadow disabled:opacity-40"
+                >
+                  Удалить
+                </button>
+              </div>
+              <div className="absolute bottom-0 left-0 bg-black/50 text-white text-[10px] px-1">
+                {idx + 1}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

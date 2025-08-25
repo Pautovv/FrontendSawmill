@@ -8,7 +8,7 @@ import WarehousePage from "./components/Inventory/warehousepage";
 import Tasks from "./components/Tasks/Tasks";
 import Auth from "./components/Auth/Auth";
 import Reports from "./components/Reports/Reports";
-
+import UsersPage from "./components/Users/UsersPage";
 const API_URL = "http://localhost:3001";
 
 function App() {
@@ -96,6 +96,7 @@ function App() {
                 <Route path="/inventory/*" element={<InventoryTable />} />
                 <Route path="/tasks" element={<Tasks />} />
                 <Route path="/reports" element={<Reports />} />
+                <Route path="/users" element={<UsersPage />} />
               </Routes>
             </div>
           </main>

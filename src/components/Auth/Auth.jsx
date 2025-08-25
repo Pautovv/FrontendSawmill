@@ -41,11 +41,11 @@ export default function Auth({ onLogin }) {
           isLoginMode
             ? { email: form.email, password: form.password }
             : {
-                email: form.email,
-                password: form.password,
-                firstName: form.firstName,
-                lastName: form.lastName,
-              }
+              email: form.email,
+              password: form.password,
+              firstName: form.firstName,
+              lastName: form.lastName,
+            }
         ),
       });
 
