@@ -5,10 +5,12 @@ import MainPage from "./components/MainPage/MainPage";
 import { Routes, Route } from "react-router-dom";
 import InventoryTable from "./components/Inventory/Inventory";
 import WarehousePage from "./components/Inventory/warehousepage";
-import Tasks from "./components/Tasks/Tasks";
+// СТАРОЕ: import Tasks from "./components/Tasks/Tasks";
+import TasksPage from "./components/Tasks/Tasks";          // НОВЫЙ универсальный
 import Auth from "./components/Auth/Auth";
 import Reports from "./components/Reports/Reports";
 import UsersPage from "./components/Users/UsersPage";
+
 const API_URL = "http://localhost:3001";
 
 function App() {
@@ -32,13 +34,12 @@ function App() {
         const storedUser = localStorage.getItem("user");
 
         if (storedUser) {
-          try {
-            setUser(JSON.parse(storedUser));
-          } catch { }
+          try { setUser(JSON.parse(storedUser)); } catch { /* ignore */ }
         }
 
         if (storedToken) {
           const me = await fetchMe(storedToken);
+            // ожидается что /auth/me вернёт { id, role, firstName, lastName, ... }
           setUser(me);
           localStorage.setItem("user", JSON.stringify(me));
         } else {
@@ -70,6 +71,7 @@ function App() {
       <Auth
         onLogin={(me) => {
           setUser(me);
+          localStorage.setItem("user", JSON.stringify(me));
         }}
       />
     );
@@ -94,9 +96,14 @@ function App() {
                 <Route path="/" element={<MainPage />} />
                 <Route path="/inventory" element={<WarehousePage />} />
                 <Route path="/inventory/*" element={<InventoryTable />} />
-                <Route path="/tasks" element={<Tasks />} />
+                <Route
+                  path="/tasks"
+                  element={<TasksPage user={user} />}  // ПЕРЕДАЁМ user
+                />
                 <Route path="/reports" element={<Reports />} />
                 <Route path="/users" element={<UsersPage />} />
+                {/* можно добавить редирект для неизвестных */}
+                {/* <Route path="*" element={<Navigate to="/" replace />} /> */}
               </Routes>
             </div>
           </main>

@@ -5,14 +5,14 @@ import { motion, AnimatePresence } from "framer-motion";
 
 const API = "http://localhost:3001";
 
-/* ======= helpers ======= */
+/* ---------- helpers ---------- */
 function normalize(s = "") {
   return String(s).trim().toLowerCase();
 }
 function detectCategoryType(name, path) {
   const n = normalize(name);
   const p = normalize(path);
-  if (n.includes("бревн") || p.includes("бревн")) return "LOG";
+  if (n.includes("круглый") || p.includes("круглый")) return "LOG";
   if (
     n.includes("пиломатериал") ||
     p.includes("пиломатериал") ||
@@ -22,15 +22,10 @@ function detectCategoryType(name, path) {
     return "LUMBER";
   return null;
 }
-function isMachineryCategory(name, path) {
-  const n = normalize(name);
-  const p = normalize(path);
-  return n.includes("станк") || p.includes("станк");
-}
 function isWoodCategory(name, path) {
   const n = normalize(name);
   const p = normalize(path);
-  if (n.includes("бревн") || p.includes("бревн")) return true;
+  if (n.includes("круглый") || p.includes("курглый")) return true;
   if (n.includes("пиломатериал") || p.includes("пиломатериал")) return true;
   if (n.includes("строган") || p.includes("строган")) return true;
   if (
@@ -116,7 +111,7 @@ function parseQuantity(val) {
   return isFinite(num) ? num : NaN;
 }
 
-/* ======= Component ======= */
+/* ---------- Component ---------- */
 export default function InventoryTable() {
   const params = useParams();
   const categoryPath = (params["*"] || "").replace(/^\//, "");
@@ -130,11 +125,29 @@ export default function InventoryTable() {
   const [children, setChildren] = useState([]);
   const [notFound, setNotFound] = useState(false);
 
-  // context menu state
-  const [contextMenu, setContextMenu] = useState(null); // {x,y,item}
-  const [moveItem, setMoveItem] = useState(null); // item object or null
+  const [contextMenu, setContextMenu] = useState(null);
+  const [moveItem, setMoveItem] = useState(null);
+
+  // --- ДОБАВЛЕНО: роль текущего пользователя ---
+  const [currentUserRole, setCurrentUserRole] = useState(null);
 
   const closeContextMenu = useCallback(() => setContextMenu(null), []);
+
+  // --- Загрузка роли пользователя ---
+  useEffect(() => {
+    let ignore = false;
+    (async () => {
+      try {
+        const token = localStorage.getItem('accessToken');
+        const headers = token ? { Authorization: `Bearer ${token}` } : {};
+        const r = await axios.get(`${API}/auth/me`, { headers });
+        if (!ignore) setCurrentUserRole(r.data?.role || null);
+      } catch {
+        if (!ignore) setCurrentUserRole(null);
+      }
+    })();
+    return () => { ignore = true; };
+  }, []);
 
   useEffect(() => {
     function onEsc(e) {
@@ -154,7 +167,6 @@ export default function InventoryTable() {
       setLoading(true);
       setNotFound(false);
       try {
-        // IMPORTANT: ensure backend adds warehouse.responsible (select firstName,lastName,email) in /items/by-category
         const [catRes, childrenRes, itemsRes] = await Promise.all([
           axios.get(`${API}/categories/by-path`, { params: { path: categoryPath } }),
           axios.get(`${API}/categories/children`, { params: { parentPath: categoryPath } }),
@@ -177,14 +189,15 @@ export default function InventoryTable() {
           new Set(
             list
               .flatMap((item) => item.fields.map((f) => f.key))
-              .filter(
-                (k) => normalize(k) !== "склад" && normalize(k) !== "полка"
-              )
+              .filter((k) => {
+                const nk = normalize(k);
+                return !['шт', 'количество', 'колличество', 'quantity'].includes(nk) &&
+                  nk !== 'склад' && nk !== 'полка';
+              })
           )
         );
         setAllKeys(keysRaw);
       } catch (e) {
-        console.error(e);
         setNotFound(true);
       } finally {
         if (!ignore) setLoading(false);
@@ -196,7 +209,6 @@ export default function InventoryTable() {
     };
   }, [categoryPath]);
 
-  // close context menu on any normal left click
   useEffect(() => {
     function onClick() {
       if (contextMenu) setContextMenu(null);
@@ -242,6 +254,11 @@ export default function InventoryTable() {
   };
 
   function handleDelete(itemId) {
+    // Дополнительная серверная защита на клиенте:
+    if (currentUserRole !== 'ADMIN') {
+      alert('Удаление доступно только администратору');
+      return;
+    }
     if (!window.confirm("Удалить предмет?")) return;
     axios
       .delete(`${API}/items/${itemId}`)
@@ -267,7 +284,6 @@ export default function InventoryTable() {
     <div className="p-6 relative">
       <Breadcrumbs path={categoryInfo.path} />
 
-      {/* Подкатегории */}
       <div className="mb-6">
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-lg font-semibold">Подкатегории — {categoryInfo.name}</h3>
@@ -294,7 +310,6 @@ export default function InventoryTable() {
         )}
       </div>
 
-      {/* Таблица */}
       <div className="flex items-center justify-between">
         <h3 className="text-lg font-semibold">Предметы — {categoryInfo.name}</h3>
         <button
@@ -329,6 +344,7 @@ export default function InventoryTable() {
                     <th className="px-4 py-3 text-right font-semibold">м²</th>
                   </>
                 )}
+                <th className="px-4 py-3 text-right font-semibold">Кол-во (шт)</th>
                 <th className="px-4 py-3 text-left font-semibold">Склад</th>
                 <th className="px-4 py-3 text-left font-semibold">Полка</th>
                 <th className="px-4 py-3 text-left font-semibold">Ответственный</th>
@@ -352,45 +368,39 @@ export default function InventoryTable() {
           <tbody>
             {items.map((item, idx) => {
               const sizeField = getFieldAny(item, ["размер", "size"]);
-              const qtyField = getFieldAny(item, [
-                "шт",
-                "количество",
-                "колличество",
-                "quantity",
-              ]);
-              const qtyParsed = parseQuantity(qtyField?.value);
-              const qty = isFinite(qtyParsed) && qtyParsed > 0 ? qtyParsed : 1;
+              const qtyFieldLegacy = getFieldAny(item, ["шт", "количество", "колличество", "quantity"]);
+              let qty = item.quantity ?? 0;
+              if ((!qty || qty <= 0) && qtyFieldLegacy) {
+                const parsedLegacy = parseQuantity(qtyFieldLegacy.value);
+                if (isFinite(parsedLegacy) && parsedLegacy > 0) qty = parsedLegacy;
+              }
+              if (!isFinite(qty) || qty <= 0) qty = 0;
+
               const baseMetrics =
                 isSpecial || isWood
                   ? computeMetrics(sizeField?.value, categoryInfo.type)
                   : null;
               const metrics = baseMetrics
                 ? {
-                  lm: round3(baseMetrics.lm * qty),
-                  m3: round3(baseMetrics.m3 * qty),
-                  m2: round3(baseMetrics.m2 * qty),
-                }
+                    lm: qty > 0 && baseMetrics.lm != null ? round3(baseMetrics.lm * qty) : baseMetrics.lm,
+                    m3: qty > 0 && baseMetrics.m3 != null ? round3(baseMetrics.m3 * qty) : baseMetrics.m3,
+                    m2: qty > 0 && baseMetrics.m2 != null ? round3(baseMetrics.m2 * qty) : baseMetrics.m2,
+                  }
                 : null;
+
               const breed = isWood
-                ? findFieldValue(item.fields, [
-                  "порода",
-                  "порода древесины",
-                  "wood",
-                  "breed",
-                ])
+                ? findFieldValue(item.fields, ["порода", "порода древесины", "wood", "breed"])
                 : null;
 
               const warehouseName = item.warehouse?.name || "—";
               const shelfName = item.shelf?.name || "—";
-
               const respUser = item.warehouse?.responsible
                 ? formatUser(item.warehouse.responsible)
                 : "—";
 
-              const baseRowClass = `transition-colors cursor-context-menu hover:bg-gray-50 dark:hover:bg-neutral-800 ${idx % 2 === 0
-                  ? "bg-white dark:bg-neutral-900"
-                  : "bg-gray-50 dark:bg-neutral-800"
-                }`;
+              const baseRowClass = `transition-colors cursor-context-menu hover:bg-gray-50 dark:hover:bg-neutral-800 ${
+                idx % 2 === 0 ? "bg-white dark:bg-neutral-900" : "bg-gray-50 dark:bg-neutral-800"
+              }`;
 
               if (!isWood) {
                 return (
@@ -424,6 +434,9 @@ export default function InventoryTable() {
                         </td>
                       </>
                     )}
+                    <td className="px-4 py-3 text-right">
+                      {qty > 0 ? qty : "—"}
+                    </td>
                     <td className="px-4 py-3">{warehouseName}</td>
                     <td className="px-4 py-3">{shelfName}</td>
                     <td className="px-4 py-3">{respUser}</td>
@@ -442,7 +455,7 @@ export default function InventoryTable() {
                   <td className="px-4 py-3">{breed || "—"}</td>
                   <td className="px-4 py-3">{sizeField?.value || "—"}</td>
                   <td className="px-4 py-3 text-right">
-                    {isFinite(qty) ? qty : "—"}
+                    {qty > 0 ? qty : "—"}
                   </td>
                   <td className="px-4 py-3 text-right">
                     {metrics ? metrics.lm : "—"}
@@ -463,7 +476,6 @@ export default function InventoryTable() {
         </table>
       </div>
 
-      {/* Контекстное меню */}
       {contextMenu && (
         <div
           className="fixed z-50 w-56 bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-lg shadow-lg py-1 animate-fade-in"
@@ -481,21 +493,31 @@ export default function InventoryTable() {
           >
             Переместить...
           </button>
-          <button
-            onClick={() => {
-              handleDelete(contextMenu.item.id);
-              closeContextMenu();
-            }}
-            className="w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30"
-          >
-            Удалить
-          </button>
+
+          {/* Кнопка Удалить только для ADMIN */}
+          {currentUserRole === 'ADMIN' && (
+            <button
+              onClick={() => {
+                handleDelete(contextMenu.item.id);
+                closeContextMenu();
+              }}
+              className="w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30"
+            >
+              Удалить
+            </button>
+          )}
+
           <button
             onClick={closeContextMenu}
             className="w-full text-left px-3 py-2 text-sm hover:bg-neutral-100 dark:hover:bg-neutral-700"
           >
             Закрыть
           </button>
+          {currentUserRole !== 'ADMIN' && (
+            <div className="px-3 pt-1 pb-2 text-[10px] text-neutral-400 border-t dark:border-neutral-700">
+              Удаление доступно только администратору
+            </div>
+          )}
         </div>
       )}
 
@@ -533,7 +555,7 @@ export default function InventoryTable() {
   );
 }
 
-/* ======= UI helpers ======= */
+/* ---------- UI helpers ---------- */
 function formatUser(u) {
   const fio = [u.lastName, u.firstName].filter(Boolean).join(" ");
   return fio || u.email || `ID:${u.id}`;
@@ -628,7 +650,7 @@ function AddSubcategoryButton({ parentPath, onCreated }) {
   );
 }
 
-/* ======= AddItemModal (unchanged except earlier modifications) ======= */
+/* ---------- AddItemModal ---------- */
 function AddItemModal({
   categoryId,
   categoryType,
@@ -637,111 +659,72 @@ function AddItemModal({
   onSave,
   forceWoodLayout,
 }) {
-  const woodRequired = forceWoodLayout;
-  const requiredNonStorage = [];
-  if (categoryType) requiredNonStorage.push("Размер");
-  if (woodRequired) requiredNonStorage.push("шт");
+  const woodLayout = forceWoodLayout || !!categoryType;
 
-  const [fields, setFields] = useState(
-    requiredNonStorage.map((k) => ({ key: k, value: "" }))
-  );
-  const [name, setName] = useState("");
+  const initialFields = [];
+  if (woodLayout) initialFields.push({ key: 'Порода', value: '' });
+  if (categoryType) initialFields.push({ key: 'Размер', value: '' });
+
+  const [fields, setFields] = useState(initialFields);
+  const [name, setName] = useState('');
+  const [quantity, setQuantity] = useState('');
+
   const [warehouses, setWarehouses] = useState([]);
-  const [warehouseId, setWarehouseId] = useState("");
-  const [shelfId, setShelfId] = useState("");
+  const [warehouseId, setWarehouseId] = useState('');
+  const [shelfId, setShelfId] = useState('');
+
   useEffect(() => {
-    axios
-      .get(`${API}/warehouses`, { params: { withShelves: 1 } })
-      .then((res) => setWarehouses(res.data || []))
+    axios.get(`${API}/warehouses`, { params: { withShelves: 1 } })
+      .then(res => setWarehouses(res.data || []))
       .catch(() => { });
   }, []);
+
   const shelves = useMemo(() => {
     if (!warehouseId) return [];
-    return warehouses.find((w) => w.id === Number(warehouseId))?.shelves || [];
+    return warehouses.find(w => w.id === Number(warehouseId))?.shelves || [];
   }, [warehouseId, warehouses]);
-  useEffect(
-    () => {
-      if (shelves.every((s) => s.id !== Number(shelfId))) setShelfId("");
-    },
-    // eslint-disable-next-line
-    [warehouseId, shelves]
-  );
 
-  const norm = (s) => normalize(s);
-  const findIdx = (pred) => fields.findIndex(pred);
-  const sizeIdx = findIdx((f) => ["размер", "size"].includes(norm(f.key)));
-  const qtyIdx = findIdx((f) =>
-    ["шт", "количество", "колличество", "quantity"].includes(norm(f.key))
-  );
-  const sizeStr = sizeIdx >= 0 ? fields[sizeIdx].value : "";
-  const qtyStr = qtyIdx >= 0 ? fields[qtyIdx].value : "";
+  useEffect(() => {
+    if (shelves.every(s => s.id !== Number(shelfId))) setShelfId('');
+  }, [warehouseId, shelves, shelfId]);
 
-  const metrics = useMemo(() => {
-    if (!categoryType) return null;
-    const base = computeMetrics(sizeStr, categoryType);
-    if (!base) return null;
-    const q = parseQuantity(qtyStr);
-    const qty = isFinite(q) && q > 0 ? q : 1;
-    return {
-      lm: round3(base.lm * qty),
-      m3: round3(base.m3 * qty),
-      m2: round3(base.m2 * qty),
-    };
-  }, [sizeStr, qtyStr, categoryType]);
+  const sizeIdx = fields.findIndex(f => ['размер', 'size'].includes(normalize(f.key)));
+  const breedIdx = fields.findIndex(f => ['порода', 'breed'].includes(normalize(f.key)));
 
-  const sizePlaceholder =
-    categoryType === "LOG"
-      ? "Диаметр x Длина (напр. 300x6000 мм)"
-      : categoryType === "LUMBER"
-        ? "Толщина x Ширина x Длина (напр. 50x150x6000 мм)"
-        : "Размер";
-
-  function addField() {
-    setFields((p) => [...p, { key: "", value: "" }]);
-  }
-  function changeField(i, f) {
-    setFields((prev) => {
+  function changeField(i, patch) {
+    setFields(prev => {
       const next = [...prev];
-      if (requiredNonStorage.map(normalize).includes(norm(prev[i].key))) {
-        next[i] = { ...f, key: prev[i].key };
-      } else {
-        next[i] = f;
-      }
+      next[i] = patch;
       return next;
     });
   }
+  function addField() {
+    setFields(prev => [...prev, { key: '', value: '' }]);
+  }
   function removeField(i) {
-    setFields((prev) => {
-      const k = prev[i].key;
-      if (requiredNonStorage.map(normalize).includes(norm(k))) return prev;
-      return prev.filter((_, idx) => idx !== i);
-    });
+    const keyLower = normalize(fields[i].key);
+    if (woodLayout && ['порода', 'breed'].includes(keyLower)) return;
+    if (categoryType && ['размер', 'size'].includes(keyLower)) return;
+    setFields(prev => prev.filter((_, idx) => idx !== i));
   }
   function ensureHas(key) {
-    return fields.some((f) => norm(f.key) === norm(key));
+    return fields.some(f => normalize(f.key) === normalize(key));
   }
-
   async function save() {
-    if (!name.trim()) return alert("Введите название предмета");
-    if (!warehouseId) return alert("Выберите склад");
-    if (!shelfId) return alert("Выберите полку");
-    if (categoryType) {
-      if (!ensureHas("размер") && !ensureHas("size"))
-        return alert("Поле 'Размер' обязательно");
-      if (!computeMetrics(sizeStr, categoryType))
-        return alert("Формат 'Размер' неверный");
-    }
-    if (woodRequired) {
-      if (
-        !ensureHas("шт") &&
-        !ensureHas("количество") &&
-        !ensureHas("quantity")
-      )
-        return alert("Поле 'шт' обязательно");
-      const qParsed = parseQuantity(qtyStr);
-      if (!isFinite(qParsed) || qParsed <= 0)
-        return alert("Введите корректное значение 'шт' > 0");
-    }
+    if (!name.trim()) return alert('Введите название');
+    const q = Number(quantity);
+    if (!isFinite(q) || q <= 0) return alert('Количество > 0');
+    if (!warehouseId) return alert('Выберите склад');
+    if (!shelfId) return alert('Выберите полку');
+
+    if (woodLayout && breedIdx === -1) return alert('Поле "Порода" обязательно');
+    if (woodLayout && breedIdx >= 0 && !fields[breedIdx].value.trim())
+      return alert('Заполните "Порода"');
+    if (categoryType && !ensureHas('размер') && !ensureHas('size'))
+      return alert('Поле "Размер" обязательно');
+    if (categoryType && sizeIdx >= 0 && !fields[sizeIdx].value.trim())
+      return alert('Заполните "Размер"');
+
     try {
       const res = await axios.post(`${API}/items`, {
         categoryId,
@@ -749,207 +732,214 @@ function AddItemModal({
         fields,
         warehouseId: Number(warehouseId),
         shelfId: Number(shelfId),
+        quantity: q,
       });
       onSave(res.data);
     } catch (e) {
-      alert(e?.response?.data?.message || e.message || "Ошибка сохранения");
+      alert(e?.response?.data?.message || e.message || 'Ошибка сохранения');
     }
   }
 
   const disableSave =
     !name.trim() ||
+    !quantity ||
     !warehouseId ||
     !shelfId ||
-    (categoryType && !ensureHas("размер") && !ensureHas("size")) ||
-    (categoryType && !computeMetrics(sizeStr, categoryType)) ||
-    (woodRequired &&
-      !(
-        ensureHas("шт") ||
-        ensureHas("количество") ||
-        ensureHas("quantity")
-      ));
+    (woodLayout && breedIdx === -1) ||
+    (woodLayout && breedIdx >= 0 && !fields[breedIdx].value.trim()) ||
+    (categoryType && (!ensureHas('размер') && !ensureHas('size'))) ||
+    (categoryType && sizeIdx >= 0 && !fields[sizeIdx].value.trim());
 
   return (
     <motion.div
       className="fixed inset-0 flex items-center justify-center bg-black/50 z-50"
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
+      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
       onClick={onClose}
     >
       <motion.div
-        onClick={(e) => e.stopPropagation()}
-        initial={{ scale: 0.85, opacity: 0 }}
+        onClick={e => e.stopPropagation()}
+        initial={{ scale: .9, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
-        exit={{ scale: 0.85, opacity: 0 }}
-        transition={{ type: "spring", stiffness: 220, damping: 22 }}
-        className="bg-white dark:bg-neutral-900 p-6 rounded-2xl shadow-2xl w-full max-w-lg"
+        exit={{ scale: .9, opacity: 0 }}
+        transition={{ type: 'spring', stiffness: 220, damping: 22 }}
+        className="bg-white dark:bg-neutral-900 p-6 rounded-2xl shadow-2xl w-full max-w-xl"
       >
-        <h3 className="text-xl font-bold mb-4 text-center">
-          Добавить новый предмет{categoryName ? ` — ${categoryName}` : ""}
+        <h3 className="text-xl font-bold mb-5 text-center">
+          Новый предмет{categoryName ? ` — ${categoryName}` : ''}
         </h3>
 
-        <input
-          type="text"
-          placeholder="Название предмета"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          className="w-full mb-4 px-4 py-2 rounded-lg border dark:border-neutral-700 dark:bg-neutral-800 focus:ring-2 focus:ring-blue-500"
-        />
+        <div className="space-y-4">
+          <div className="grid md:grid-cols-2 gap-4">
+            <div className="flex flex-col gap-1">
+              <label className="text-xs uppercase font-medium tracking-wide text-neutral-500">Название *</label>
+              <input
+                value={name}
+                onChange={e => setName(e.target.value)}
+                placeholder="Напр. Доска"
+                className="rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 px-3 py-2 text-sm"
+              />
+            </div>
 
-        <div className="grid grid-cols-2 gap-3 mb-4">
-          <div>
-            <label className="block text-xs mb-1 text-neutral-500">
-              Склад *
-            </label>
-            <select
-              value={warehouseId}
-              onChange={(e) => {
-                setWarehouseId(e.target.value);
-                setShelfId("");
-              }}
-              className="w-full px-3 py-2 rounded-lg border dark:border-neutral-700 dark:bg-neutral-800"
-            >
-              <option value="">-- выберите --</option>
-              {warehouses.map((w) => (
-                <option key={w.id} value={w.id}>
-                  {w.name}
-                </option>
-              ))}
-            </select>
+            <div className="flex flex-col gap-1">
+              <label className="text-xs uppercase font-medium tracking-wide text-neutral-500">
+                Количество (шт) *
+              </label>
+              <input
+                type="number"
+                min={1}
+                step={1}
+                value={quantity}
+                onChange={e => setQuantity(e.target.value)}
+                placeholder="Напр. 100"
+                className="rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 px-3 py-2 text-sm"
+              />
+            </div>
           </div>
-          <div>
-            <label className="block text-xs mb-1 text-neutral-500">
-              Полка *
-            </label>
-            <select
-              value={shelfId}
-              onChange={(e) => setShelfId(e.target.value)}
-              disabled={!warehouseId || shelves.length === 0}
-              className="w-full px-3 py-2 rounded-lg border dark:border-neutral-700 dark:bg-neutral-800 disabled:opacity-50"
-            >
-              <option value="">-- выберите --</option>
-              {shelves.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name}
-                </option>
-              ))}
-            </select>
+
+          {woodLayout && (
+            <div className="grid md:grid-cols-2 gap-4">
+              <div className="flex flex-col gap-1">
+                <label className="text-xs uppercase font-medium tracking-wide text-neutral-500">
+                  Порода *
+                </label>
+                <input
+                  value={breedIdx >= 0 ? fields[breedIdx].value : ''}
+                  onChange={e => {
+                    if (breedIdx >= 0) {
+                      changeField(breedIdx, { key: fields[breedIdx].key, value: e.target.value });
+                    } else {
+                      setFields(prev => [...prev, { key: 'Порода', value: e.target.value }]);
+                    }
+                  }}
+                  placeholder="Напр. Сосна"
+                  className="rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 px-3 py-2 text-sm"
+                />
+              </div>
+
+              {categoryType && (
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs uppercase font-medium tracking-wide text-neutral-500">
+                    Размер *
+                  </label>
+                  <input
+                    value={sizeIdx >= 0 ? fields[sizeIdx].value : ''}
+                    onChange={e => {
+                      if (sizeIdx >= 0) {
+                        changeField(sizeIdx, { key: fields[sizeIdx].key, value: e.target.value });
+                      } else {
+                        setFields(prev => [...prev, { key: 'Размер', value: e.target.value }]);
+                      }
+                    }}
+                    placeholder={
+                      categoryType === 'LOG'
+                        ? 'Диаметр x Длина (мм) напр. 300x6000'
+                        : 'Толщина x Ширина x Длина (мм) напр. 50x150x6000'
+                    }
+                    className="rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 px-3 py-2 text-sm"
+                  />
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className="grid md:grid-cols-2 gap-4">
+            <div className="flex flex-col gap-1">
+              <label className="text-xs uppercase font-medium tracking-wide text-neutral-500">
+                Склад *
+              </label>
+              <select
+                value={warehouseId}
+                onChange={e => { setWarehouseId(e.target.value); setShelfId(''); }}
+                className="rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 px-3 py-2 text-sm"
+              >
+                <option value="">-- выберите --</option>
+                {warehouses.map(w => (
+                  <option key={w.id} value={w.id}>{w.name}</option>
+                ))}
+              </select>
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-xs uppercase font-medium tracking-wide text-neutral-500">
+                Полка *
+              </label>
+              <select
+                value={shelfId}
+                onChange={e => setShelfId(e.target.value)}
+                disabled={!warehouseId}
+                className="rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 px-3 py-2 text-sm disabled:opacity-50"
+              >
+                <option value="">-- выберите --</option>
+                {shelves.map(s => (
+                  <option key={s.id} value={s.id}>{s.name}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="mt-2">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-semibold uppercase text-neutral-500">
+                Доп. характеристики
+              </span>
+              <button
+                onClick={addField}
+                className="text-xs px-2 py-1 rounded-md bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700"
+                type="button"
+              >
+                + Добавить
+              </button>
+            </div>
+            <div className="max-h-44 overflow-auto pr-1 space-y-2">
+              {fields.map((f, i) => {
+                const keyLower = normalize(f.key);
+                const isBreed = ['порода', 'breed'].includes(keyLower);
+                const isSize = ['размер', 'size'].includes(keyLower);
+                const protectedField = (woodLayout && isBreed) || (categoryType && isSize);
+                return (
+                  <div key={i} className="flex gap-2">
+                    <input
+                      value={f.key}
+                      disabled={protectedField}
+                      onChange={e => changeField(i, { key: e.target.value, value: f.value })}
+                      placeholder="Ключ"
+                      className={`w-40 rounded-lg border px-3 py-1.5 text-xs ${protectedField ? 'bg-neutral-100 dark:bg-neutral-800 opacity-70' : 'bg-white dark:bg-neutral-800'
+                        } border-neutral-300 dark:border-neutral-700`}
+                    />
+                    <input
+                      value={f.value}
+                      onChange={e => changeField(i, { key: f.key, value: e.target.value })}
+                      placeholder="Значение"
+                      className="flex-1 rounded-lg border px-3 py-1.5 text-xs bg-white dark:bg-neutral-800 border-neutral-300 dark:border-neutral-700"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => removeField(i)}
+                      disabled={protectedField}
+                      className="px-2 py-1.5 rounded-lg border border-neutral-300 dark:border-neutral-700 text-xs hover:bg-neutral-50 dark:hover:bg-neutral-700 disabled:opacity-40"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                );
+              })}
+              {fields.length === 0 && (
+                <div className="text-[11px] text-neutral-500">Нет характеристик</div>
+              )}
+            </div>
           </div>
         </div>
 
-        <div className="max-h-60 overflow-y-auto pr-1 mb-3">
-          {fields.map((field, i) => {
-            const keyNorm = norm(field.key);
-            const isSize = ["размер", "size"].includes(keyNorm);
-            const isQty = ["шт", "количество", "колличество", "quantity"].includes(
-              keyNorm
-            );
-            const isRequired = requiredNonStorage
-              .map(norm)
-              .includes(keyNorm);
-            return (
-              <div key={i} className="flex gap-2 mb-2">
-                <input
-                  type="text"
-                  value={field.key}
-                  onChange={(e) =>
-                    changeField(i, { ...field, key: e.target.value })
-                  }
-                  disabled={isRequired}
-                  placeholder={
-                    isSize
-                      ? "Размер"
-                      : isQty
-                        ? "шт / количество"
-                        : "Характеристика"
-                  }
-                  className={`flex-1 px-3 py-2 rounded-lg border dark:border-neutral-700 dark:bg-neutral-800 ${isSize ? "border-blue-400" : ""
-                    } ${isRequired ? "opacity-80 cursor-not-allowed" : ""}`}
-                />
-                <input
-                  type="text"
-                  value={field.value}
-                  onChange={(e) =>
-                    changeField(i, { ...field, value: e.target.value })
-                  }
-                  placeholder={
-                    isSize
-                      ? sizePlaceholder
-                      : isQty
-                        ? "Количество"
-                        : "Значение"
-                  }
-                  className={`flex-1 px-3 py-2 rounded-lg border dark:border-neutral-700 dark:bg-neutral-800 ${isSize ? "border-blue-400" : ""
-                    }`}
-                />
-                <button
-                  type="button"
-                  onClick={() => removeField(i)}
-                  disabled={isRequired}
-                  title={
-                    isRequired ? "Обязательное поле" : "Удалить характеристику"
-                  }
-                  className={`px-3 py-2 rounded-lg border dark:border-neutral-700 ${isRequired
-                      ? "opacity-50 cursor-not-allowed"
-                      : "hover:bg-neutral-50 dark:hover:bg-neutral-800"
-                    }`}
-                >
-                  ✕
-                </button>
-              </div>
-            );
-          })}
-        </div>
-
-        <button
-          onClick={addField}
-          className="mt-1 mb-4 text-blue-600 hover:underline text-sm"
-        >
-          + Добавить характеристику
-        </button>
-
-        {categoryType && (
-          <div className="mb-4 rounded-xl border border-neutral-200 dark:border-neutral-700 p-3 text-sm">
-            <div className="text-neutral-500 mb-2">Предпросмотр расчётов:</div>
-            {metrics ? (
-              <div className="flex gap-6 flex-wrap">
-                <div>
-                  <span className="text-neutral-500">Пог. м:</span>{" "}
-                  <b>{metrics.lm}</b>
-                </div>
-                <div>
-                  <span className="text-neutral-500">м³:</span>{" "}
-                  <b>{metrics.m3}</b>
-                </div>
-                <div>
-                  <span className="text-neutral-500">м²:</span>{" "}
-                  <b>{metrics.m2}</b>
-                </div>
-              </div>
-            ) : (
-              <div className="text-red-600">
-                Укажите корректный “Размер” (
-                {categoryType === "LOG"
-                  ? "Диаметр x Длина"
-                  : "Толщина x Ширина x Длина"}
-                )
-              </div>
-            )}
-          </div>
-        )}
-
-        <div className="flex justify-end gap-3">
+        <div className="mt-6 flex justify-end gap-3">
           <button
             onClick={onClose}
-            className="px-4 py-2 rounded-lg bg-gray-200 dark:bg-neutral-700 hover:bg-gray-300 dark:hover:bg-neutral-600"
+            className="px-4 py-2 rounded-lg bg-neutral-200 dark:bg-neutral-700 hover:bg-neutral-300 dark:hover:bg-neutral-600 text-sm"
           >
             Отмена
           </button>
           <button
             onClick={save}
             disabled={disableSave}
-            className="px-4 py-2 rounded-lg bg-gradient-to-r from-blue-500 to-indigo-600 text-white shadow-md disabled:opacity-50 disabled:cursor-not-allowed hover:scale-105 transition-transform"
+            className="px-5 py-2 rounded-lg bg-gradient-to-r from-blue-600 to-indigo-600 text-white text-sm shadow disabled:opacity-50"
           >
             Сохранить
           </button>
@@ -959,7 +949,7 @@ function AddItemModal({
   );
 }
 
-/* ======= MoveItemModal ======= */
+/* ---------- MoveItemModal ---------- */
 function MoveItemModal({ item, onClose, onMoved }) {
   const [warehouses, setWarehouses] = useState([]);
   const [warehouseId, setWarehouseId] = useState(item.warehouseId || "");
@@ -991,7 +981,6 @@ function MoveItemModal({ item, onClose, onMoved }) {
     if (!shelfId) return alert("Выберите полку");
     setSaving(true);
     try {
-      // Требуется backend endpoint PATCH /items/:id
       const res = await axios.patch(`${API}/items/${item.id}`, {
         warehouseId: Number(warehouseId),
         shelfId: Number(shelfId),
@@ -1079,9 +1068,7 @@ function MoveItemModal({ item, onClose, onMoved }) {
           </button>
           <button
             onClick={save}
-            disabled={
-              saving || !warehouseId || !shelfId
-            }
+            disabled={saving || !warehouseId || !shelfId}
             className="px-4 py-2 rounded-lg bg-gradient-to-r from-amber-500 to-orange-600 text-white disabled:opacity-50"
           >
             {saving ? "Сохранение..." : "Переместить"}
@@ -1091,9 +1078,3 @@ function MoveItemModal({ item, onClose, onMoved }) {
     </motion.div>
   );
 }
-
-/* ===== CSS helper (optional) =====
-Add to global styles if you want the fade-in:
-@keyframes fade-in { from { opacity:0; transform:translateY(4px);} to { opacity:1; transform:translateY(0);} }
-.animate-fade-in { animation: fade-in .15s ease-out both; }
-*/

@@ -36,13 +36,6 @@ function MainPage() {
       icon: PlusCircle,
       accent: "from-blue-500 to-indigo-500",
     },
-    {
-      id: "nomenclature",
-      title: "Добавить номенклатуру",
-      description: "Создайте новые названия (карты, шаги, станки, материалы).",
-      icon: ListPlus,
-      accent: "from-rose-500 to-orange-500",
-    },
   ];
 
   const modalMap = {
