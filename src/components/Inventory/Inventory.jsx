@@ -5,10 +5,11 @@ import { motion, AnimatePresence } from "framer-motion";
 
 const API = "http://localhost:3001";
 
-/* ---------- helpers ---------- */
+/* ------------ Helpers ------------- */
 function normalize(s = "") {
   return String(s).trim().toLowerCase();
 }
+
 function detectCategoryType(name, path) {
   const n = normalize(name);
   const p = normalize(path);
@@ -17,15 +18,41 @@ function detectCategoryType(name, path) {
     n.includes("пиломатериал") ||
     p.includes("пиломатериал") ||
     n.includes("строган") ||
-    p.includes("строган")
+    p.includes("строган") ||
+    n.includes("производственный участок") ||
+    p.includes("производственный участок") ||
+    n.includes("магазин внутренний склад") ||
+    p.includes("магазин внутренний склад") ||
+    n.includes("магазин открытая площадка") ||
+    p.includes("магазин открытая площадка") ||
+    n.includes("под навесом") ||
+    p.includes("под навесом")
   )
     return "LUMBER";
   return null;
 }
+
+// Категории инструментальные / контейнерные с обязательным полем "Размер"
+function isSizeOnlyCategoryName(name = "", path = "") {
+  const n = normalize(name);
+  const p = normalize(path);
+  return (
+    n.includes("склад № 8") ||
+    n.includes("склад №8") ||
+    n.includes("склад 8") ||
+    n.includes("склад № 9") ||
+    n.includes("склад №9") ||
+    n.includes("склад 9") ||
+    p.includes("склад-№-8") ||
+    p.includes("склад-№-9")
+  );
+}
+
+// (Пока не используется в логике, оставлено на будущее)
 function isWoodCategory(name, path) {
   const n = normalize(name);
   const p = normalize(path);
-  if (n.includes("круглый") || p.includes("курглый")) return true;
+  if (n.includes("круглый") || p.includes("круглый")) return true;
   if (n.includes("пиломатериал") || p.includes("пиломатериал")) return true;
   if (n.includes("строган") || p.includes("строган")) return true;
   if (
@@ -33,13 +60,20 @@ function isWoodCategory(name, path) {
     (n.includes("пиломатериал") || p.includes("пиломатериал"))
   )
     return true;
+  if (n.includes("производственный участок") || p.includes("производственный-участок")) return true;
+  if (n.includes("магазин внутренний склад") || p.includes("магазин-внутренний-склад")) return true;
+  if (n.includes("магазин открытая площадка") || p.includes("магазин-открытая-площадка")) return true;
+  if (n.includes("под навесом") || p.includes("под-навесом")) return true;
   return false;
 }
+
 const SEP_RE = /x|×|\*|х/gi;
+
 function toNumber(val) {
   if (val == null) return NaN;
   return Number(String(val).replace(",", "."));
 }
+
 function parseTokenToMeters(raw) {
   const s = String(raw).trim().toLowerCase();
   const num = toNumber(s.replace(/[^\d.,-]/g, ""));
@@ -47,14 +81,16 @@ function parseTokenToMeters(raw) {
   if (s.includes("мм") || s.includes("mm")) return num / 1000;
   if (s.includes("см") || s.includes("cm")) return num / 100;
   if (s.includes("м ") || s.endsWith("м") || s.includes(" m") || s.endsWith("m")) return num;
-  return num / 1000;
+  return num / 1000; // трактуем как мм по умолчанию
 }
+
 function parseSize(sizeStr, type) {
   if (!sizeStr) return null;
   const parts = String(sizeStr)
     .split(SEP_RE)
     .map((p) => p.trim())
     .filter(Boolean);
+
   if (type === "LOG") {
     if (parts.length < 2) return null;
     const d = parseTokenToMeters(parts[0]);
@@ -72,9 +108,11 @@ function parseSize(sizeStr, type) {
   }
   return null;
 }
+
 function round3(n) {
   return isFinite(n) ? Number(n.toFixed(3)) : null;
 }
+
 function computeMetrics(sizeStr, type) {
   const parsed = parseSize(sizeStr, type);
   if (!parsed) return null;
@@ -94,10 +132,12 @@ function computeMetrics(sizeStr, type) {
   }
   return null;
 }
+
 function getField(item, keyName) {
   const k = normalize(keyName);
   return item.fields.find((f) => normalize(f.key) === k);
 }
+
 function getFieldAny(item, keys = []) {
   for (const k of keys) {
     const f = getField(item, k);
@@ -105,6 +145,7 @@ function getFieldAny(item, keys = []) {
   }
   return null;
 }
+
 function parseQuantity(val) {
   if (val == null) return NaN;
   const num = toNumber(String(val).replace(/[^\d.,-]/g, ""));
@@ -128,17 +169,15 @@ export default function InventoryTable() {
   const [contextMenu, setContextMenu] = useState(null);
   const [moveItem, setMoveItem] = useState(null);
 
-  // --- ДОБАВЛЕНО: роль текущего пользователя ---
   const [currentUserRole, setCurrentUserRole] = useState(null);
 
   const closeContextMenu = useCallback(() => setContextMenu(null), []);
 
-  // --- Загрузка роли пользователя ---
   useEffect(() => {
     let ignore = false;
     (async () => {
       try {
-        const token = localStorage.getItem('accessToken');
+        const token = localStorage.getItem("accessToken");
         const headers = token ? { Authorization: `Bearer ${token}` } : {};
         const r = await axios.get(`${API}/auth/me`, { headers });
         if (!ignore) setCurrentUserRole(r.data?.role || null);
@@ -146,7 +185,9 @@ export default function InventoryTable() {
         if (!ignore) setCurrentUserRole(null);
       }
     })();
-    return () => { ignore = true; };
+    return () => {
+      ignore = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -191,8 +232,11 @@ export default function InventoryTable() {
               .flatMap((item) => item.fields.map((f) => f.key))
               .filter((k) => {
                 const nk = normalize(k);
-                return !['шт', 'количество', 'колличество', 'quantity'].includes(nk) &&
-                  nk !== 'склад' && nk !== 'полка';
+                return (
+                  !["шт", "количество", "колличество", "quantity"].includes(nk) &&
+                  nk !== "склад" &&
+                  nk !== "полка"
+                );
               })
           )
         );
@@ -244,8 +288,11 @@ export default function InventoryTable() {
     );
   }
 
-  const isSpecial = Boolean(categoryInfo.type);
-  const isWood = isSpecial || isWoodCategory(categoryInfo.name, categoryInfo.path);
+  const categoryType = categoryInfo.type;
+  const isWoodType = categoryType === "LOG" || categoryType === "LUMBER";
+  const sizeOnly = !isWoodType && isSizeOnlyCategoryName(categoryInfo.name, categoryInfo.path);
+  const isWood = isWoodType;
+  const showMetrics = isWoodType;
 
   const findFieldValue = (fields, variants) => {
     const normVariants = variants.map(normalize);
@@ -254,9 +301,8 @@ export default function InventoryTable() {
   };
 
   function handleDelete(itemId) {
-    // Дополнительная серверная защита на клиенте:
-    if (currentUserRole !== 'ADMIN') {
-      alert('Удаление доступно только администратору');
+    if (currentUserRole !== "ADMIN") {
+      alert("Удаление доступно только администратору");
       return;
     }
     if (!window.confirm("Удалить предмет?")) return;
@@ -321,9 +367,7 @@ export default function InventoryTable() {
       </div>
 
       {items.length === 0 && (
-        <p className="mb-4 text-gray-500 text-center text-lg">
-          Нет предметов в этой категории
-        </p>
+        <p className="mb-4 text-gray-500 text-center text-lg">Нет предметов в этой категории</p>
       )}
 
       <div className="overflow-x-auto rounded-2xl shadow-lg border border-neutral-200 dark:border-neutral-700">
@@ -337,7 +381,7 @@ export default function InventoryTable() {
                     {key}
                   </th>
                 ))}
-                {isSpecial && (
+                {showMetrics && (
                   <>
                     <th className="px-4 py-3 text-right font-semibold">Пог. м</th>
                     <th className="px-4 py-3 text-right font-semibold">м³</th>
@@ -376,16 +420,13 @@ export default function InventoryTable() {
               }
               if (!isFinite(qty) || qty <= 0) qty = 0;
 
-              const baseMetrics =
-                isSpecial || isWood
-                  ? computeMetrics(sizeField?.value, categoryInfo.type)
-                  : null;
+              const baseMetrics = showMetrics ? computeMetrics(sizeField?.value, categoryType) : null;
               const metrics = baseMetrics
                 ? {
-                    lm: qty > 0 && baseMetrics.lm != null ? round3(baseMetrics.lm * qty) : baseMetrics.lm,
-                    m3: qty > 0 && baseMetrics.m3 != null ? round3(baseMetrics.m3 * qty) : baseMetrics.m3,
-                    m2: qty > 0 && baseMetrics.m2 != null ? round3(baseMetrics.m2 * qty) : baseMetrics.m2,
-                  }
+                  lm: qty > 0 && baseMetrics.lm != null ? round3(baseMetrics.lm * qty) : baseMetrics.lm,
+                  m3: qty > 0 && baseMetrics.m3 != null ? round3(baseMetrics.m3 * qty) : baseMetrics.m3,
+                  m2: qty > 0 && baseMetrics.m2 != null ? round3(baseMetrics.m2 * qty) : baseMetrics.m2,
+                }
                 : null;
 
               const breed = isWood
@@ -398,9 +439,8 @@ export default function InventoryTable() {
                 ? formatUser(item.warehouse.responsible)
                 : "—";
 
-              const baseRowClass = `transition-colors cursor-context-menu hover:bg-gray-50 dark:hover:bg-neutral-800 ${
-                idx % 2 === 0 ? "bg-white dark:bg-neutral-900" : "bg-gray-50 dark:bg-neutral-800"
-              }`;
+              const baseRowClass = `transition-colors cursor-context-menu hover:bg-gray-50 dark:hover:bg-neutral-800 ${idx % 2 === 0 ? "bg-white dark:bg-neutral-900" : "bg-gray-50 dark:bg-neutral-800"
+                }`;
 
               if (!isWood) {
                 return (
@@ -415,28 +455,16 @@ export default function InventoryTable() {
                       const field = item.fields.find(
                         (f) => normalize(f.key) === normalize(key)
                       );
-                      return (
-                        <td key={key} className="px-4 py-3">
-                          {field ? field.value : "—"}
-                        </td>
-                      );
+                      return <td key={key} className="px-4 py-3">{field ? field.value : "—"}</td>;
                     })}
-                    {isSpecial && (
+                    {showMetrics && (
                       <>
-                        <td className="px-4 py-3 text-right">
-                          {metrics ? metrics.lm : "—"}
-                        </td>
-                        <td className="px-4 py-3 text-right">
-                          {metrics ? metrics.m3 : "—"}
-                        </td>
-                        <td className="px-4 py-3 text-right">
-                          {metrics ? metrics.m2 : "—"}
-                        </td>
+                        <td className="px-4 py-3 text-right">{metrics ? metrics.lm : "—"}</td>
+                        <td className="px-4 py-3 text-right">{metrics ? metrics.m3 : "—"}</td>
+                        <td className="px-4 py-3 text-right">{metrics ? metrics.m2 : "—"}</td>
                       </>
                     )}
-                    <td className="px-4 py-3 text-right">
-                      {qty > 0 ? qty : "—"}
-                    </td>
+                    <td className="px-4 py-3 text-right">{qty > 0 ? qty : "—"}</td>
                     <td className="px-4 py-3">{warehouseName}</td>
                     <td className="px-4 py-3">{shelfName}</td>
                     <td className="px-4 py-3">{respUser}</td>
@@ -454,18 +482,10 @@ export default function InventoryTable() {
                   <td className="px-4 py-3 font-medium">{item.name}</td>
                   <td className="px-4 py-3">{breed || "—"}</td>
                   <td className="px-4 py-3">{sizeField?.value || "—"}</td>
-                  <td className="px-4 py-3 text-right">
-                    {qty > 0 ? qty : "—"}
-                  </td>
-                  <td className="px-4 py-3 text-right">
-                    {metrics ? metrics.lm : "—"}
-                  </td>
-                  <td className="px-4 py-3 text-right">
-                    {metrics ? metrics.m3 : "—"}
-                  </td>
-                  <td className="px-4 py-3 text-right">
-                    {metrics ? metrics.m2 : "—"}
-                  </td>
+                  <td className="px-4 py-3 text-right">{qty > 0 ? qty : "—"}</td>
+                  <td className="px-4 py-3 text-right">{metrics ? metrics.lm : "—"}</td>
+                  <td className="px-4 py-3 text-right">{metrics ? metrics.m3 : "—"}</td>
+                  <td className="px-4 py-3 text-right">{metrics ? metrics.m2 : "—"}</td>
                   <td className="px-4 py-3">{warehouseName}</td>
                   <td className="px-4 py-3">{shelfName}</td>
                   <td className="px-4 py-3">{respUser}</td>
@@ -479,10 +499,7 @@ export default function InventoryTable() {
       {contextMenu && (
         <div
           className="fixed z-50 w-56 bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-lg shadow-lg py-1 animate-fade-in"
-          style={{
-            top: contextMenu.y,
-            left: contextMenu.x,
-          }}
+          style={{ top: contextMenu.y, left: contextMenu.x }}
         >
           <div className="px-3 py-2 text-xs text-neutral-500 border-b dark:border-neutral-700">
             {contextMenu.item.name}
@@ -494,8 +511,7 @@ export default function InventoryTable() {
             Переместить...
           </button>
 
-          {/* Кнопка Удалить только для ADMIN */}
-          {currentUserRole === 'ADMIN' && (
+          {currentUserRole === "ADMIN" && (
             <button
               onClick={() => {
                 handleDelete(contextMenu.item.id);
@@ -513,7 +529,7 @@ export default function InventoryTable() {
           >
             Закрыть
           </button>
-          {currentUserRole !== 'ADMIN' && (
+          {currentUserRole !== "ADMIN" && (
             <div className="px-3 pt-1 pb-2 text-[10px] text-neutral-400 border-t dark:border-neutral-700">
               Удаление доступно только администратору
             </div>
@@ -525,14 +541,15 @@ export default function InventoryTable() {
         {showAddItemModal && (
           <AddItemModal
             categoryId={Number(categoryInfo.id)}
-            categoryType={categoryInfo.type}
+            categoryType={categoryType}
             categoryName={categoryInfo.name}
             onClose={() => setShowAddItemModal(false)}
             onSave={(newItem) => {
               setItems((items) => [...items, newItem]);
               setShowAddItemModal(false);
             }}
-            forceWoodLayout={isWood}
+            forceWoodLayout={isWoodType}
+            sizeOnly={sizeOnly}
           />
         )}
       </AnimatePresence>
@@ -543,9 +560,7 @@ export default function InventoryTable() {
             item={moveItem}
             onClose={() => setMoveItem(null)}
             onMoved={(updated) => {
-              setItems((prev) =>
-                prev.map((it) => (it.id === updated.id ? updated : it))
-              );
+              setItems((prev) => prev.map((it) => (it.id === updated.id ? updated : it)));
               setMoveItem(null);
             }}
           />
@@ -658,72 +673,123 @@ function AddItemModal({
   onClose,
   onSave,
   forceWoodLayout,
+  sizeOnly = false,
 }) {
-  const woodLayout = forceWoodLayout || !!categoryType;
+  const isWoodType = forceWoodLayout && (categoryType === "LOG" || categoryType === "LUMBER");
+  const hasSizeField = isWoodType || sizeOnly || !!categoryType;
+
+  const [quantityUnit, setQuantityUnit] = useState("pcs"); // pcs | lm
+  const [quantityLm, setQuantityLm] = useState("");
 
   const initialFields = [];
-  if (woodLayout) initialFields.push({ key: 'Порода', value: '' });
-  if (categoryType) initialFields.push({ key: 'Размер', value: '' });
+  if (isWoodType) initialFields.push({ key: "Порода", value: "" });
+  if (hasSizeField) initialFields.push({ key: "Размер", value: "" });
 
   const [fields, setFields] = useState(initialFields);
-  const [name, setName] = useState('');
-  const [quantity, setQuantity] = useState('');
+  const [name, setName] = useState("");
+  const [quantity, setQuantity] = useState("");
 
   const [warehouses, setWarehouses] = useState([]);
-  const [warehouseId, setWarehouseId] = useState('');
-  const [shelfId, setShelfId] = useState('');
+  const [warehouseId, setWarehouseId] = useState("");
+  const [shelfId, setShelfId] = useState("");
 
   useEffect(() => {
-    axios.get(`${API}/warehouses`, { params: { withShelves: 1 } })
-      .then(res => setWarehouses(res.data || []))
+    axios
+      .get(`${API}/warehouses`, { params: { withShelves: 1 } })
+      .then((res) => setWarehouses(res.data || []))
       .catch(() => { });
   }, []);
 
   const shelves = useMemo(() => {
     if (!warehouseId) return [];
-    return warehouses.find(w => w.id === Number(warehouseId))?.shelves || [];
+    return warehouses.find((w) => w.id === Number(warehouseId))?.shelves || [];
   }, [warehouseId, warehouses]);
 
   useEffect(() => {
-    if (shelves.every(s => s.id !== Number(shelfId))) setShelfId('');
+    if (shelves.every((s) => s.id !== Number(shelfId))) setShelfId("");
   }, [warehouseId, shelves, shelfId]);
 
-  const sizeIdx = fields.findIndex(f => ['размер', 'size'].includes(normalize(f.key)));
-  const breedIdx = fields.findIndex(f => ['порода', 'breed'].includes(normalize(f.key)));
+  const sizeIdx = fields.findIndex((f) => ["размер", "size"].includes(normalize(f.key)));
+  const breedIdx = fields.findIndex((f) => ["порода", "breed"].includes(normalize(f.key)));
 
   function changeField(i, patch) {
-    setFields(prev => {
+    setFields((prev) => {
       const next = [...prev];
       next[i] = patch;
       return next;
     });
   }
   function addField() {
-    setFields(prev => [...prev, { key: '', value: '' }]);
+    setFields((prev) => [...prev, { key: "", value: "" }]);
   }
+
   function removeField(i) {
     const keyLower = normalize(fields[i].key);
-    if (woodLayout && ['порода', 'breed'].includes(keyLower)) return;
-    if (categoryType && ['размер', 'size'].includes(keyLower)) return;
-    setFields(prev => prev.filter((_, idx) => idx !== i));
+    if (isWoodType && ["порода", "breed"].includes(keyLower)) return;
+    if (hasSizeField && ["размер", "size"].includes(keyLower)) return;
+    setFields((prev) => prev.filter((_, idx) => idx !== i));
   }
-  function ensureHas(key) {
-    return fields.some(f => normalize(f.key) === normalize(key));
-  }
-  async function save() {
-    if (!name.trim()) return alert('Введите название');
-    const q = Number(quantity);
-    if (!isFinite(q) || q <= 0) return alert('Количество > 0');
-    if (!warehouseId) return alert('Выберите склад');
-    if (!shelfId) return alert('Выберите полку');
 
-    if (woodLayout && breedIdx === -1) return alert('Поле "Порода" обязательно');
-    if (woodLayout && breedIdx >= 0 && !fields[breedIdx].value.trim())
+  function ensureHas(key) {
+    return fields.some((f) => normalize(f.key) === normalize(key));
+  }
+
+  function upsertField(key, value) {
+    const nk = normalize(key);
+    setFields((prev) => {
+      const idx = prev.findIndex((f) => normalize(f.key) === nk);
+      if (idx === -1) return [...prev, { key, value }];
+      const next = [...prev];
+      next[idx] = { key: next[idx].key, value };
+      return next;
+    });
+  }
+
+  function getSizeValue() {
+    if (sizeIdx >= 0) return fields[sizeIdx].value;
+    return "";
+  }
+
+  const parsedSize = useMemo(
+    () => (hasSizeField ? parseSize(getSizeValue(), categoryType) : null),
+    [fields, sizeIdx, hasSizeField, categoryType]
+  );
+
+  const perPieceLength =
+    parsedSize && (categoryType === "LOG" ? parsedSize.l : categoryType === "LUMBER" ? parsedSize.l : null);
+
+  const canUseLm = isWoodType && perPieceLength && perPieceLength > 0;
+
+  async function save() {
+    if (!name.trim()) return alert("Введите название");
+    if (!warehouseId) return alert("Выберите склад");
+    if (!shelfId) return alert("Выберите полку");
+
+    if (isWoodType && breedIdx === -1) return alert('Поле "Порода" обязательно');
+    if (isWoodType && breedIdx >= 0 && !fields[breedIdx].value.trim())
       return alert('Заполните "Порода"');
-    if (categoryType && !ensureHas('размер') && !ensureHas('size'))
+
+    if (hasSizeField && (!ensureHas("размер") && !ensureHas("size")))
       return alert('Поле "Размер" обязательно');
-    if (categoryType && sizeIdx >= 0 && !fields[sizeIdx].value.trim())
+    if (hasSizeField && sizeIdx >= 0 && !fields[sizeIdx].value.trim())
       return alert('Заполните "Размер"');
+
+    let quantityToSend = 0;
+
+    if (quantityUnit === "pcs") {
+      const q = Number(quantity);
+      if (!isFinite(q) || q <= 0) return alert("Количество (шт) должно быть > 0");
+      quantityToSend = q;
+    } else if (quantityUnit === "lm") {
+      if (!canUseLm) return alert("Невозможно вычислить длину: заполните корректно поле Размер");
+      const lmVal = Number(quantityLm);
+      if (!isFinite(lmVal) || lmVal <= 0) return alert("Линейные метры должны быть > 0");
+      let pieces = lmVal / perPieceLength;
+      pieces = Number(pieces.toFixed(3)); // допускаем дробные; заменить на Math.round(...) если нужно целое
+      if (!isFinite(pieces) || pieces <= 0) return alert("Не удалось вычислить количество штук");
+      quantityToSend = pieces;
+      upsertField("Линейные метры", String(lmVal));
+    }
 
     try {
       const res = await axios.post(`${API}/items`, {
@@ -732,23 +798,34 @@ function AddItemModal({
         fields,
         warehouseId: Number(warehouseId),
         shelfId: Number(shelfId),
-        quantity: q,
+        quantity: quantityToSend,
       });
       onSave(res.data);
     } catch (e) {
-      alert(e?.response?.data?.message || e.message || 'Ошибка сохранения');
+      alert(e?.response?.data?.message || e.message || "Ошибка сохранения");
     }
   }
 
-  const disableSave =
-    !name.trim() ||
-    !quantity ||
-    !warehouseId ||
-    !shelfId ||
-    (woodLayout && breedIdx === -1) ||
-    (woodLayout && breedIdx >= 0 && !fields[breedIdx].value.trim()) ||
-    (categoryType && (!ensureHas('размер') && !ensureHas('size'))) ||
-    (categoryType && sizeIdx >= 0 && !fields[sizeIdx].value.trim());
+  const disableSave = (() => {
+    if (!name.trim() || !warehouseId || !shelfId) return true;
+    if (isWoodType) {
+      if (breedIdx === -1) return true;
+      if (breedIdx >= 0 && !fields[breedIdx].value.trim()) return true;
+    }
+    if (hasSizeField) {
+      if (!ensureHas("размер") && !ensureHas("size")) return true;
+      if (sizeIdx >= 0 && !fields[sizeIdx].value.trim()) return true;
+    }
+    if (quantityUnit === "pcs") {
+      const q = Number(quantity);
+      if (!isFinite(q) || q <= 0) return true;
+    } else if (quantityUnit === "lm") {
+      if (!canUseLm) return true;
+      const lmVal = Number(quantityLm);
+      if (!isFinite(lmVal) || lmVal <= 0) return true;
+    }
+    return false;
+  })();
 
   return (
     <motion.div
@@ -768,7 +845,7 @@ function AddItemModal({
           Новый предмет{categoryName ? ` — ${categoryName}` : ''}
         </h3>
 
-        <div className="space-y-4">
+        <div className="space-y-5">
           <div className="grid md:grid-cols-2 gap-4">
             <div className="flex flex-col gap-1">
               <label className="text-xs uppercase font-medium tracking-wide text-neutral-500">Название *</label>
@@ -780,60 +857,129 @@ function AddItemModal({
               />
             </div>
 
-            <div className="flex flex-col gap-1">
-              <label className="text-xs uppercase font-medium tracking-wide text-neutral-500">
-                Количество (шт) *
-              </label>
-              <input
-                type="number"
-                min={1}
-                step={1}
-                value={quantity}
-                onChange={e => setQuantity(e.target.value)}
-                placeholder="Напр. 100"
-                className="rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 px-3 py-2 text-sm"
-              />
-            </div>
-          </div>
-
-          {woodLayout && (
-            <div className="grid md:grid-cols-2 gap-4">
+            {quantityUnit === "pcs" && (
               <div className="flex flex-col gap-1">
                 <label className="text-xs uppercase font-medium tracking-wide text-neutral-500">
-                  Порода *
+                  Количество (шт) *
                 </label>
                 <input
-                  value={breedIdx >= 0 ? fields[breedIdx].value : ''}
-                  onChange={e => {
-                    if (breedIdx >= 0) {
-                      changeField(breedIdx, { key: fields[breedIdx].key, value: e.target.value });
-                    } else {
-                      setFields(prev => [...prev, { key: 'Порода', value: e.target.value }]);
-                    }
-                  }}
-                  placeholder="Напр. Сосна"
+                  type="number"
+                  min={1}
+                  step={1}
+                  value={quantity}
+                  onChange={e => setQuantity(e.target.value)}
+                  placeholder="Напр. 100"
                   className="rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 px-3 py-2 text-sm"
                 />
               </div>
+            )}
 
-              {categoryType && (
+            {quantityUnit === "lm" && (
+              <div className="flex flex-col gap-1">
+                <label className="text-xs uppercase font-medium tracking-wide text-neutral-500">
+                  Линейные метры *
+                </label>
+                <input
+                  type="number"
+                  min={0.001}
+                  step={0.001}
+                  value={quantityLm}
+                  onChange={e => setQuantityLm(e.target.value)}
+                  placeholder="Напр. 56.4"
+                  className="rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 px-3 py-2 text-sm"
+                />
+                {isWoodType && perPieceLength && (
+                  <div className="text-[11px] text-neutral-500">
+                    Длина одной единицы: {perPieceLength} м
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {isWoodType && (
+            <div className="flex items-center gap-4 text-xs">
+              <label className="flex items-center gap-1 cursor-pointer">
+                <input
+                  type="radio"
+                  value="pcs"
+                  checked={quantityUnit === "pcs"}
+                  onChange={() => setQuantityUnit("pcs")}
+                />
+                <span>В штуках</span>
+              </label>
+              <label className="flex items-center gap-1 cursor-pointer">
+                <input
+                  type="radio"
+                  value="lm"
+                  checked={quantityUnit === "lm"}
+                  onChange={() => setQuantityUnit("lm")}
+                  disabled={!canUseLm}
+                />
+                <span className={canUseLm ? "" : "opacity-50"}>В пог. метрах</span>
+              </label>
+              {!canUseLm && (
+                <span className="text-[11px] text-red-500">
+                  Для ввода в метрах заполните корректно поле Размер.
+                </span>
+              )}
+            </div>
+          )}
+
+          {(isWoodType || hasSizeField) && (
+            <div className="grid md:grid-cols-2 gap-4">
+              {isWoodType && (
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs uppercase font-medium tracking-wide text-neutral-500">
+                    Порода *
+                  </label>
+                  <input
+                    value={breedIdx >= 0 ? fields[breedIdx].value : ""}
+                    onChange={(e) => {
+                      if (breedIdx >= 0) {
+                        changeField(breedIdx, {
+                          key: fields[breedIdx].key,
+                          value: e.target.value,
+                        });
+                      } else {
+                        setFields((prev) => [
+                          ...prev,
+                          { key: "Порода", value: e.target.value },
+                        ]);
+                      }
+                    }}
+                    placeholder="Напр. Сосна"
+                    className="rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 px-3 py-2 text-sm"
+                  />
+                </div>
+              )}
+
+              {hasSizeField && (
                 <div className="flex flex-col gap-1">
                   <label className="text-xs uppercase font-medium tracking-wide text-neutral-500">
                     Размер *
                   </label>
                   <input
-                    value={sizeIdx >= 0 ? fields[sizeIdx].value : ''}
-                    onChange={e => {
+                    value={sizeIdx >= 0 ? fields[sizeIdx].value : ""}
+                    onChange={(e) => {
                       if (sizeIdx >= 0) {
-                        changeField(sizeIdx, { key: fields[sizeIdx].key, value: e.target.value });
+                        changeField(sizeIdx, {
+                          key: fields[sizeIdx].key,
+                          value: e.target.value,
+                        });
                       } else {
-                        setFields(prev => [...prev, { key: 'Размер', value: e.target.value }]);
+                        setFields((prev) => [
+                          ...prev,
+                          { key: "Размер", value: e.target.value },
+                        ]);
                       }
                     }}
                     placeholder={
-                      categoryType === 'LOG'
-                        ? 'Диаметр x Длина (мм) напр. 300x6000'
-                        : 'Толщина x Ширина x Длина (мм) напр. 50x150x6000'
+                      categoryType === "LOG"
+                        ? "Диаметр x Длина (мм) напр. 300x6000"
+                        : categoryType === "LUMBER"
+                          ? "Толщина x Ширина x Длина (мм) напр. 50x150x6000"
+                          : "Напр. 600x400x250"
                     }
                     className="rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 px-3 py-2 text-sm"
                   />
@@ -849,12 +995,17 @@ function AddItemModal({
               </label>
               <select
                 value={warehouseId}
-                onChange={e => { setWarehouseId(e.target.value); setShelfId(''); }}
+                onChange={(e) => {
+                  setWarehouseId(e.target.value);
+                  setShelfId("");
+                }}
                 className="rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 px-3 py-2 text-sm"
               >
                 <option value="">-- выберите --</option>
-                {warehouses.map(w => (
-                  <option key={w.id} value={w.id}>{w.name}</option>
+                {warehouses.map((w) => (
+                  <option key={w.id} value={w.id}>
+                    {w.name}
+                  </option>
                 ))}
               </select>
             </div>
@@ -864,13 +1015,15 @@ function AddItemModal({
               </label>
               <select
                 value={shelfId}
-                onChange={e => setShelfId(e.target.value)}
+                onChange={(e) => setShelfId(e.target.value)}
                 disabled={!warehouseId}
                 className="rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 px-3 py-2 text-sm disabled:opacity-50"
               >
                 <option value="">-- выберите --</option>
-                {shelves.map(s => (
-                  <option key={s.id} value={s.id}>{s.name}</option>
+                {shelves.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                  </option>
                 ))}
               </select>
             </div>
@@ -892,22 +1045,29 @@ function AddItemModal({
             <div className="max-h-44 overflow-auto pr-1 space-y-2">
               {fields.map((f, i) => {
                 const keyLower = normalize(f.key);
-                const isBreed = ['порода', 'breed'].includes(keyLower);
-                const isSize = ['размер', 'size'].includes(keyLower);
-                const protectedField = (woodLayout && isBreed) || (categoryType && isSize);
+                const isBreed = ["порода", "breed"].includes(keyLower);
+                const isSize = ["размер", "size"].includes(keyLower);
+                const protectedField =
+                  (isWoodType && isBreed) || (hasSizeField && isSize);
                 return (
                   <div key={i} className="flex gap-2">
                     <input
                       value={f.key}
                       disabled={protectedField}
-                      onChange={e => changeField(i, { key: e.target.value, value: f.value })}
+                      onChange={(e) =>
+                        changeField(i, { key: e.target.value, value: f.value })
+                      }
                       placeholder="Ключ"
-                      className={`w-40 rounded-lg border px-3 py-1.5 text-xs ${protectedField ? 'bg-neutral-100 dark:bg-neutral-800 opacity-70' : 'bg-white dark:bg-neutral-800'
+                      className={`w-40 rounded-lg border px-3 py-1.5 text-xs ${protectedField
+                          ? "bg-neutral-100 dark:bg-neutral-800 opacity-70"
+                          : "bg-white dark:bg-neutral-800"
                         } border-neutral-300 dark:border-neutral-700`}
                     />
                     <input
                       value={f.value}
-                      onChange={e => changeField(i, { key: f.key, value: e.target.value })}
+                      onChange={(e) =>
+                        changeField(i, { key: f.key, value: e.target.value })
+                      }
                       placeholder="Значение"
                       className="flex-1 rounded-lg border px-3 py-1.5 text-xs bg-white dark:bg-neutral-800 border-neutral-300 dark:border-neutral-700"
                     />
@@ -965,9 +1125,7 @@ function MoveItemModal({ item, onClose, onMoved }) {
 
   const shelves = useMemo(() => {
     if (!warehouseId) return [];
-    return (
-      warehouses.find((w) => w.id === Number(warehouseId))?.shelves || []
-    );
+    return warehouses.find((w) => w.id === Number(warehouseId))?.shelves || [];
   }, [warehouseId, warehouses]);
 
   useEffect(() => {

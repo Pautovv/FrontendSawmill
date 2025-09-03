@@ -23,13 +23,6 @@ function MainPage() {
       accent: "from-violet-500 to-fuchsia-500",
     },
     {
-      id: "operation",
-      title: "Добавить операцию",
-      description: "Создайте новую операцию и заполните детали.",
-      icon: PlusCircle,
-      accent: "from-emerald-500 to-teal-500",
-    },
-    {
       id: "warehouse",
       title: "Добавить склад",
       description: "Создайте склад и полки.",
@@ -40,9 +33,8 @@ function MainPage() {
 
   const modalMap = {
     passport: ModalPassport,
-    operation: ModalOperation,
     warehouse: ModalWarehouse,
-    nomenclature: ModalNomenclature, // <-- новая модалка
+    nomenclature: ModalNomenclature, 
   };
 
   const ActiveModal = modalType ? modalMap[modalType] : null;
@@ -92,8 +84,6 @@ function MainPage() {
         <ActiveModal
           onClose={() => setModalType(null)}
           onCreated={(created) => {
-            // Можно сделать refetch списков, invalidate кэш и т.д.
-            // console.log('Created:', created);
             setModalType(null);
           }}
         />
