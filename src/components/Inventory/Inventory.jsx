@@ -326,6 +326,31 @@ export default function InventoryTable() {
     setContextMenu(null);
   }
 
+  function handleMoveResult(result) {
+    setItems((prev) => {
+      if (result && result.id && result.fields) {
+        return prev.map((i) => (i.id === result.id ? result : i));
+      }
+      if (result && result.source && result.target) {
+        const { source, target } = result;
+        let next = prev.map((i) => (i.id === source.id ? source : i));
+        const existsTarget = next.some((i) => i.id === target.id);
+        if (target.id !== source.id) {
+          if (existsTarget) {
+            next = next.map((i) => (i.id === target.id ? target : i));
+          } else {
+            next = [...next, target];
+          }
+        } else {
+          next = next.map((i) => (i.id === target.id ? target : i));
+        }
+        return next;
+      }
+      return prev;
+    });
+    setMoveItem(null);
+  }
+
   return (
     <div className="p-6 relative">
       <Breadcrumbs path={categoryInfo.path} />
@@ -559,10 +584,7 @@ export default function InventoryTable() {
           <MoveItemModal
             item={moveItem}
             onClose={() => setMoveItem(null)}
-            onMoved={(updated) => {
-              setItems((prev) => prev.map((it) => (it.id === updated.id ? updated : it)));
-              setMoveItem(null);
-            }}
+            onMoved={handleMoveResult}
           />
         )}
       </AnimatePresence>
@@ -1059,8 +1081,8 @@ function AddItemModal({
                       }
                       placeholder="Ключ"
                       className={`w-40 rounded-lg border px-3 py-1.5 text-xs ${protectedField
-                          ? "bg-neutral-100 dark:bg-neutral-800 opacity-70"
-                          : "bg-white dark:bg-neutral-800"
+                        ? "bg-neutral-100 dark:bg-neutral-800 opacity-70"
+                        : "bg-white dark:bg-neutral-800"
                         } border-neutral-300 dark:border-neutral-700`}
                     />
                     <input
@@ -1109,12 +1131,16 @@ function AddItemModal({
   );
 }
 
-/* ---------- MoveItemModal ---------- */
 function MoveItemModal({ item, onClose, onMoved }) {
   const [warehouses, setWarehouses] = useState([]);
   const [warehouseId, setWarehouseId] = useState(item.warehouseId || "");
   const [shelfId, setShelfId] = useState(item.shelfId || "");
   const [saving, setSaving] = useState(false);
+
+  const [quantity, setQuantity] = useState("");        // новое поле
+  const [quantityError, setQuantityError] = useState("");
+
+  const availableQty = item.quantity ?? 0;
 
   useEffect(() => {
     axios
@@ -1134,16 +1160,54 @@ function MoveItemModal({ item, onClose, onMoved }) {
     }
   }, [shelves, shelfId]);
 
+  // Валидация количества
+  useEffect(() => {
+    if (quantity === "") {
+      setQuantityError("");
+      return;
+    }
+    const num = Number(quantity);
+    if (Number.isNaN(num) || !Number.isFinite(num)) {
+      setQuantityError("Некорректное число");
+    } else if (num <= 0) {
+      setQuantityError("Количество должно быть > 0");
+    } else if (num > availableQty) {
+      setQuantityError(`Нельзя больше чем ${availableQty}`);
+    } else {
+      setQuantityError("");
+    }
+  }, [quantity, availableQty]);
+
+  const isPartial = () => {
+    const num = Number(quantity);
+    return quantity !== "" && num > 0 && num < availableQty;
+  };
+
   async function save() {
     if (!warehouseId) return alert("Выберите склад");
     if (!shelfId) return alert("Выберите полку");
+    if (!quantity) return alert("Введите количество");
+    if (quantityError) return;
+    const qtyNum = Number(quantity);
+
     setSaving(true);
     try {
-      const res = await axios.patch(`${API}/items/${item.id}`, {
-        warehouseId: Number(warehouseId),
-        shelfId: Number(shelfId),
-      });
-      onMoved(res.data);
+      if (qtyNum === availableQty) {
+        // Полный перенос — PATCH
+        const res = await axios.patch(`${API}/items/${item.id}`, {
+          warehouseId: Number(warehouseId),
+          shelfId: Number(shelfId),
+        });
+        onMoved(res.data);                 // один item
+      } else {
+        // Частичный перенос — новый эндпоинт
+        const res = await axios.post(`${API}/items/${item.id}/move-partial`, {
+          warehouseId: Number(warehouseId),
+          shelfId: Number(shelfId),
+          quantity: qtyNum,
+        });
+        onMoved(res.data);                 // { source, target, fullMove:false }
+      }
     } catch (e) {
       alert(e?.response?.data?.message || e.message);
     } finally {
@@ -1191,6 +1255,7 @@ function MoveItemModal({ item, onClose, onMoved }) {
               ))}
             </select>
           </div>
+
           <div>
             <label className="block text-xs uppercase tracking-wide text-neutral-500 mb-1">
               Полка
@@ -1214,6 +1279,35 @@ function MoveItemModal({ item, onClose, onMoved }) {
               </div>
             )}
           </div>
+
+          <div>
+            <label className="block text-xs uppercase tracking-wide text-neutral-500 mb-1">
+              Количество (доступно: {availableQty})
+            </label>
+            <input
+              type="number"
+              min={1}
+              step={1}
+              value={quantity}
+              onChange={(e) => setQuantity(e.target.value)}
+              className={`w-full px-3 py-2 rounded-lg border dark:border-neutral-700 dark:bg-neutral-800 ${quantityError ? "border-red-500 text-red-600 placeholder-red-400" : ""
+                }`}
+              placeholder="Введите кол-во"
+            />
+            {quantityError && (
+              <div className="text-xs text-red-500 mt-1">{quantityError}</div>
+            )}
+            {quantity && !quantityError && isPartial() && (
+              <div className="text-xs text-amber-500 mt-1">
+                Частичное перемещение: {quantity} из {availableQty}
+              </div>
+            )}
+            {quantity && !quantityError && Number(quantity) === availableQty && (
+              <div className="text-xs text-green-500 mt-1">
+                Будет перемещено всё количество
+              </div>
+            )}
+          </div>
         </div>
 
         <div className="flex justify-end gap-3">
@@ -1226,7 +1320,13 @@ function MoveItemModal({ item, onClose, onMoved }) {
           </button>
           <button
             onClick={save}
-            disabled={saving || !warehouseId || !shelfId}
+            disabled={
+              saving ||
+              !warehouseId ||
+              !shelfId ||
+              !quantity ||
+              !!quantityError
+            }
             className="px-4 py-2 rounded-lg bg-gradient-to-r from-amber-500 to-orange-600 text-white disabled:opacity-50"
           >
             {saving ? "Сохранение..." : "Переместить"}
